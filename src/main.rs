@@ -614,6 +614,10 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, pretty: b
     let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let (vm, image) = (abs(&vm), abs(&image));
     let _ = std::fs::create_dir_all(&inst.dir);
+    // The state directory (images, logs, Pharo's pharo-local/ombu-sessions) never belongs in version control.
+    if !inst.dir.join(".gitignore").exists() {
+        let _ = std::fs::write(inst.dir.join(".gitignore"), "# created by stlive: local state, never commit\n*\n");
+    }
     let _ = std::fs::write(&cfg_path, json!({"vm": vm, "image": image}).to_string());
     let serve = inst.path("serve.st");
     let _ = std::fs::write(&serve, SERVE_ST);

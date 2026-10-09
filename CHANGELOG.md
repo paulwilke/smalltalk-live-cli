@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- `stlive start` writes `.stlive/.gitignore` (`*`) so the state directory – including Pharo's `pharo-local/ombu-sessions` – is never committed by accident.
+
 ## 0.3.0
 - `stlive attach --port N`: load the server into an image that is already running (started by an older tool or any JSON-line server), no restart needed.
 - `stlive init --vm <Pharo> --image <Pharo.image>`: use a local Pharo instead of downloading.

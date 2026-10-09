@@ -81,6 +81,8 @@ cargo install --git https://github.com/paulwilke/smalltalk-live-cli   # or: carg
 stlive init        # one time: downloads Pharo 13 (~100 MB) and builds an image containing the server
 ```
 
+Per project, state lives in `./.stlive` (a `.gitignore` inside it is created automatically, so nothing from it – images, logs, Pharo's `ombu-sessions` – gets committed).
+
 `stlive init` keeps everything in `~/.stlive` (override with `STLIVE_HOME`). Nothing else is installed.
 
 ## Use
