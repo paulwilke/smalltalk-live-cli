@@ -1,0 +1,15 @@
+[package]
+name = "stlive"
+version = "0.1.0"
+edition = "2021"
+description = "Live-debugging CLI for Smalltalk (Pharo): inspect, debug, fix and re-run in a running image"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/paulwilke/smalltalk-live-cli"
+keywords = ["smalltalk", "pharo", "debugger", "cli", "live-coding"]
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+libc = "0.2"
+similar = "2"
