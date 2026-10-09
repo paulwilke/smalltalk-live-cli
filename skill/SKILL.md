@@ -32,9 +32,17 @@ stlive image info                             # version, loaded packages, unsave
 7. **Persist**: changes made through the CLI live only in the image. `changes list|show` (unified diff), then `save --package <Pkg> --dir <repo>/src [--dry-run]` or `save --all --dir <repo>/src`. Packages come from `changes list` (`unsaved_by_package`) or a frame's `package`. Check `git diff` – it should be minimal – and commit with git.
 8. **Clean up**: `debug terminate --all` (sessions of failing tests stay suspended; max 60 are kept).
 
-## Windows and GUIs
+## GUI development (Spec2/Morphic windows)
 
-For Spec2/Morphic development start the image with `stlive start --gui` and use `--ui` on `eval` / `method compile` so changes run in the UI process. `stlive ui windows` lists windows, `stlive ui screenshot --window <title>` writes a PNG you can look at, `stlive ui press <label>` clicks a button. Errors in the UI become sessions (no Pharo debugger opens) – debug them like any other session. Without `--ui`, evaluations run in a worker process (fine for data, not for widgets).
+Start the image with `stlive start --gui`; Pharo opens its window and stays connected. The loop is *change → look → check*:
+
+1. Run anything that touches widgets with `--ui` (`eval --ui`, `method compile --ui`, `debug eval --ui`): it runs in the UI process, so layout and drawing stay safe. Without `--ui` an evaluation runs in a worker process – fine for data, not for widgets.
+2. **Look**: `stlive ui windows` (titles, presenter classes), then `stlive ui screenshot --window <title>` writes a PNG – open it and check the result visually instead of guessing.
+3. **Check behaviour**: `stlive ui press <button label>` clicks a button; read state back with `eval`.
+4. Errors in the UI become ordinary debug sessions (no Pharo debugger window opens, the GUI keeps running): debug and fix them with the normal loop, then redo the action. `ui_unavailable` means the UI process was busy or a modal dialog is open – close the dialog or wait.
+5. Errors that stlive did not start (a person clicking) still open Pharo's own debugger; that is expected.
+
+For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead – no GUI mode needed.
 
 ## Practical tips
 - Quoting: code with Smalltalk string literals (`'…'`) inside a single-quoted shell argument loses its quotes; use stdin: `stlive eval - <<'EOF' … EOF`.

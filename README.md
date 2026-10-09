@@ -22,6 +22,8 @@ Normally an agent edits files, restarts the program and reads a log. Smalltalk c
 | prove the fix, not just hope | `stlive debug rerun dbg-…` (runs the original operation again with the new code) |
 | run tests and see failures *grouped by cause* | `stlive test run MyApp-Tests` |
 | get the fix into my git repo | `stlive save --package MyApp --dir src` |
+| develop a window (Spec2/Morphic) while it is open | `stlive start --gui`, then `stlive eval --ui …` |
+| see the window – and click it – without leaving the shell | `stlive ui screenshot`, `stlive ui press Increment` |
 
 Every answer is small JSON (or readable text with `--text`), paged and with references to dig deeper – so an agent never has to read huge dumps.
 
@@ -54,7 +56,7 @@ The crashed run stays in the image as a **debug session** (`dbg-3fa-1`). You can
 
 ## The skill: how an agent learns to use it
 
-An agent that has never seen `stlive` will fumble with it. [`skill/SKILL.md`](skill/SKILL.md) is a short instruction file that teaches the **working loop** – reproduce → look in small steps → form a hypothesis and try it → fix → *re-run (not just resume)* → test → save – plus the traps (shell quoting, `resume` proves nothing, add a regression test and see it fail first, save every package).
+An agent that has never seen `stlive` will fumble with it. [`skill/SKILL.md`](skill/SKILL.md) is a short instruction file that teaches the **working loop** – reproduce → look in small steps → form a hypothesis and try it → fix → *re-run (not just resume)* → test → save – plus the GUI loop (change with `--ui`, look at a screenshot, press a button), and the traps (shell quoting, `resume` proves nothing, add a regression test and see it fail first, save every package).
 
 Install it for Claude Code by copying it:
 
@@ -139,6 +141,16 @@ An image started by an older version of this tool (or any server that speaks the
 | Persist | `save --package X \| --all --dir src [--dry-run]` |
 
 Full reference: [docs/commands.md](docs/commands.md). How it works: [docs/architecture.md](docs/architecture.md).
+
+## Status and what is still open
+
+**Works and is tested** (52 headless + 19 GUI end-to-end checks on macOS arm64, Pharo 13): the whole debug loop, tests, Tonel write-back, eval-made change recording, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses.
+
+**Open / not yet verified:**
+- Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
+- Bloc/Toplo: the UI-process mechanism is the same, but `ui windows`/`ui press` currently understand Morphic-based windows only.
+- No single-stepping (step into/over), no capture of direct stdout/stderr writes, no authentication (loopback only) and no Unix-domain-socket transport.
+- No prebuilt binaries yet (installation needs a Rust toolchain), no SUnit tests for the Smalltalk side beyond the end-to-end scripts, and the skill has been tried on small cases only.
 
 ## CLI or MCP?
 
