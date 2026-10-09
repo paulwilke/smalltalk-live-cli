@@ -156,7 +156,7 @@ The delivered image contains your application but no stlive classes and no evalu
 
 **Open / not yet verified:**
 - Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
-- Pharo 14 (needed for Spec-Gtk) is not part of this version; the differences live on the `pharo-14` branch.
+- Pharo 14 (needed for Spec-Gtk): `stlive init --pharo 14`, `stlive start --pharo 14` (worker mode is chosen automatically; `--gtk`, `--vm-arg` for manual control). Headless use is verified; Spec-Gtk and GTK window commands are not.
 - Bloc/Toplo: the UI-process mechanism is the same, but `ui windows`/`ui press` currently understand Morphic-based windows only.
 - No single-stepping (step into/over), no capture of direct stdout/stderr writes, no authentication (loopback only) and no Unix-domain-socket transport.
 - No prebuilt binaries yet (installation needs a Rust toolchain), no SUnit tests for the Smalltalk side beyond the end-to-end scripts, and the skill has been tried on small cases only.

@@ -91,21 +91,21 @@ fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
 
 /// Download and unpack the Pharo 13 VM and image into `dir`.
 #[cfg(unix)]
-pub fn download_pharo(dir: &Path) -> Result<(), String> {
+pub fn download_pharo(dir: &Path, version: u32) -> Result<(), String> {
     let script = dir.join("get-pharo.sh");
-    run(Command::new("curl").args(["-fsSL", "-o"]).arg(&script).arg("https://get.pharo.org/64/130+vm"), "download of the get.pharo.org script (is curl installed?)")?;
+    run(Command::new("curl").args(["-fsSL", "-o"]).arg(&script).arg(format!("https://get.pharo.org/64/{}0+vm", version)), "download of the get.pharo.org script (is curl installed?)")?;
     run(Command::new("bash").arg(&script).current_dir(dir), "Pharo download (needs curl and unzip)")
 }
 #[cfg(windows)]
-pub fn download_pharo(dir: &Path) -> Result<(), String> {
+pub fn download_pharo(dir: &Path, version: u32) -> Result<(), String> {
     // curl.exe and tar.exe ship with Windows 10+. File names follow files.pharo.org/get-files/130/.
     let items = [
-        ("https://files.pharo.org/get-files/130/pharoImage-x86_64.zip", "image.zip"),
-        ("https://files.pharo.org/get-files/130/pharo-vm-Windows-x86_64-stable.zip", "vm.zip"),
+        (format!("https://files.pharo.org/get-files/{}0/pharoImage-x86_64.zip", version), "image.zip"),
+        (format!("https://files.pharo.org/get-files/{}0/pharo-vm-Windows-x86_64-stable.zip", version), "vm.zip"),
     ];
     for (url, name) in items {
         let zip = dir.join(name);
-        run(Command::new("curl.exe").args(["-fsSL", "-o"]).arg(&zip).arg(url), "download (needs curl.exe)")?;
+        run(Command::new("curl.exe").args(["-fsSL", "-o"]).arg(&zip).arg(&url), "download (needs curl.exe)")?;
         let target = if name == "vm.zip" { dir.join("pharo-vm") } else { dir.to_path_buf() };
         std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
         run(Command::new("tar.exe").arg("-xf").arg(&zip).arg("-C").arg(&target), "unzip (needs tar.exe)")?;

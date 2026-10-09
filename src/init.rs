@@ -101,8 +101,8 @@ pub fn system_packages(home: &Path) -> Option<Vec<String>> {
     Some(t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
-pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Result<Value, String> {
-    let pharo_dir = home.join("pharo");
+pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>, version: u32) -> Result<Value, String> {
+    let pharo_dir = version_dir(home, version);
     std::fs::create_dir_all(&pharo_dir).map_err(|e| e.to_string())?;
 
     // 1. Pharo 13 VM + base image: a local Pharo (--vm/--image) or get.pharo.org
@@ -120,8 +120,8 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
         }
         let _ = lvm;
     } else if force || !pharo_dir.join("Pharo.image").exists() || find_vm(&pharo_dir).is_none() {
-        eprintln!("stlive: downloading Pharo 13 (VM + image, ~100 MB) from get.pharo.org ...");
-        crate::platform::download_pharo(&pharo_dir)?;
+        eprintln!("stlive: downloading Pharo {} (VM + image, ~100 MB) from get.pharo.org ...", version);
+        crate::platform::download_pharo(&pharo_dir, version)?;
     }
     let vm = match &local {
         Some((lvm, _)) => std::fs::canonicalize(lvm).map_err(|e| format!("{}: {}", lvm.display(), e))?,
@@ -152,13 +152,23 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
 
     // 4. Remember
     let cfg = json!({"vm": vm, "image": image});
-    std::fs::write(home.join("config.json"), cfg.to_string()).map_err(|e| e.to_string())?;
+    std::fs::write(version_config(home, version), cfg.to_string()).map_err(|e| e.to_string())?;
     Ok(json!({"home": home, "vm": vm, "template_image": image, "next": "stlive start"}))
 }
 
 /// Global template (vm + image) written by `init`, if present.
-pub fn template(home: &Path) -> Option<(PathBuf, PathBuf)> {
-    let t = std::fs::read_to_string(home.join("config.json")).ok()?;
+pub const DEFAULT_PHARO: u32 = 13;
+
+fn version_dir(home: &Path, version: u32) -> PathBuf {
+    if version == DEFAULT_PHARO { home.join("pharo") } else { home.join(format!("pharo{}", version)) }
+}
+
+fn version_config(home: &Path, version: u32) -> PathBuf {
+    if version == DEFAULT_PHARO { home.join("config.json") } else { home.join(format!("config-{}.json", version)) }
+}
+
+pub fn template(home: &Path, version: u32) -> Option<(PathBuf, PathBuf)> {
+    let t = std::fs::read_to_string(version_config(home, version)).ok()?;
     let v: Value = serde_json::from_str(&t).ok()?;
     Some((PathBuf::from(v["vm"].as_str()?), PathBuf::from(v["image"].as_str()?)))
 }

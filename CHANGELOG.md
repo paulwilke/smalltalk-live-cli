@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0-pharo14 (branch pharo-14)
+- `stlive init --pharo 14` downloads Pharo 14 into `~/.stlive/pharo14` and builds its template; `stlive start --pharo 14` uses it (remembered per instance).
+- Pharo 14's VM cannot be kept alive with `st … --no-quit`: for version 14+ `start` uses the worker mode (`--worker --headless`) automatically. `--gtk` selects that mode explicitly (for Spec-Gtk images), `--vm-arg` passes extra VM options before the image (repeatable).
+- Verified on Pharo 14.0 (headless worker mode): eval, debug sessions, tests, Transcript capture, object graph, server self-upgrade. **Not verified:** Spec-Gtk itself (no GTK on the test machine); `ui windows|screenshot|press` and `eval --ui` still understand Morphic only.
+
 ## 0.5.0
 - **The server upgrades itself.** `stlive start` compares a hash of the embedded Smalltalk sources with the one recorded in the image and, if they differ (an image built by an older stlive – the template *and* the per-project copies), loads the current server into the image before starting it. Previously a new binary silently kept using an old server (for instance the old Transcript failure in GUI mode) until `stlive init --force`.
 - `stlive image export <file.image> --force`: save a copy of the image **for delivery without the stlive server** (sessions ended, listener stopped, Transcript restored, `StLive` packages removed) – the delivered image has no open evaluation port; the `.changes` and `.sources` files are written next to it. This instance ends.
