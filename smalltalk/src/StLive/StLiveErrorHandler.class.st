@@ -30,6 +30,8 @@ StLiveErrorHandler >> handleError: anError [
 		exception: anError
 		context: anError signalerContext
 		kind: #exception.
+	"If this is the UI process, a fresh one takes over first so the GUI keeps running while this execution stays suspended."
+	job respawnUIIfNecessary.
 	job erroredWith: session.
 	Processor activeProcess suspend.
 	^ session takeResumeValue
@@ -45,4 +47,11 @@ StLiveErrorHandler >> handleNotification: aNotification [
 StLiveErrorHandler >> doesNotUnderstand: aMessage [
 	"Everything but errors (warnings, notifications, ...) keeps its default behaviour."
 	^ aMessage sendTo: ErrorHandler defaultErrorHandler
+]
+
+{ #category : 'handling' }
+StLiveErrorHandler >> handleWarning: aWarning [
+	"Evaluations driven through stlive never stop at a warning dialog: record it and carry on."
+	job addPlainWarning: ([ aWarning messageText asString ] on: Error do: [ :e | aWarning class name ]).
+	^ aWarning resume
 ]

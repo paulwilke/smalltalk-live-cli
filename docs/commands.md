@@ -23,6 +23,8 @@ Commands:
   changes    Recorded changes made through this CLI
   test       Tests
   package    Packages
+  ui         Windows of a GUI image (start it with `start --gui`): list, screenshot, press buttons
+  open-ui    Open a URL in a chromeless app window (Chrome/Edge --app), e.g. the web UI of your application
   debug      Debug sessions
   image      Image persistence, info and cloning
   save       Write changes made through this CLI back to Tonel files (minimal per-method diffs)
@@ -61,6 +63,25 @@ Options:
   -h, --help                   Print help
 ```
 
+## `stlive attach`
+
+```
+Load the StLive server into an image that is ALREADY running (another stlive/pharoctl server on --port)
+
+Usage: stlive attach [OPTIONS] --port <PORT>
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --port <PORT>            Port of the running server (its state file: <dir>/<instance>.port.json)
+      --pid <PID>              Process id of that image (found automatically if omitted (lsof or netstat))
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
 ## `stlive start`
 
 ```
@@ -73,6 +94,7 @@ Options:
       --vm <VM>                Pharo VM executable (remembered per instance) [env: STLIVE_VM=]
       --image <IMAGE>          Image prepared with the StLive package (remembered per instance) [env: STLIVE_IMAGE=]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --gui                    Start Pharo WITH its window (Morphic/Spec/Bloc development) instead of headless; everything else is the same
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
@@ -171,6 +193,7 @@ Options:
       --no-source              Leave the statement text out of error frames
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+      --ui                     Run in the GUI image's UI process (safe for Spec/Morphic changes; needs `start --gui`)
   -h, --help                   Print help
 ```
 
@@ -607,6 +630,7 @@ Options:
       --pretty                 Pretty-print JSON
       --protocol <PROTOCOL>    
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --ui                     Compile in the UI process (open Spec/Morphic windows are rebuilt safely; needs `start --gui`)
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
@@ -1001,6 +1025,7 @@ Options:
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --no-session             
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --ui                     
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -1235,6 +1260,108 @@ Options:
       --tag <TAG>                Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                     Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                     Print help
+```
+
+## `stlive ui`
+
+```
+Windows of a GUI image (start it with `start --gui`): list, screenshot, press buttons
+
+Usage: stlive ui [OPTIONS] <COMMAND>
+
+Commands:
+  windows     Open windows with title, presenter class, bounds and an object reference
+  screenshot  PNG of the whole world or one window (index from `ui windows` or part of the title)
+  press       Press a button by its label (or the presenter variable name) inside the UI process
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive ui windows`
+
+```
+Open windows with title, presenter class, bounds and an object reference
+
+Usage: stlive ui windows [OPTIONS]
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive ui screenshot`
+
+```
+PNG of the whole world or one window (index from `ui windows` or part of the title)
+
+Usage: stlive ui screenshot [OPTIONS]
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --window <WINDOW>        
+      --out <OUT>              Output file (default: <state dir>/screenshots/<instance>-<time>.png)
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive ui press`
+
+```
+Press a button by its label (or the presenter variable name) inside the UI process
+
+Usage: stlive ui press [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --window <WINDOW>        
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --timeout <TIMEOUT>      
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+## `stlive open-ui`
+
+```
+Open a URL in a chromeless app window (Chrome/Edge --app), e.g. the web UI of your application
+
+Usage: stlive open-ui [OPTIONS] <URL>
+
+Arguments:
+  <URL>  
+
+Options:
+      --browser <BROWSER>      Browser executable or app name (default: Chrome on macOS, Edge on Windows, first Chrome/Chromium found on Linux)
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
 ```
 
 ## `stlive raw`

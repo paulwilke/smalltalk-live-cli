@@ -13,11 +13,25 @@ Class {
 
 { #category : 'installing' }
 StLiveTranscriptTee class >> install [
+	"Never let a problem here prevent the server from starting: output capture is a convenience."
+	[ self installUnsafely ]
+		on: Error
+		do: [ :e | Stdio stdout nextPutAll: 'stlive: transcript capture disabled (' , e class name , ': ' , e messageText asString , ')'; lf; flush ]
+]
+
+{ #category : 'installing' }
+StLiveTranscriptTee class >> installUnsafely [
 	| current |
-	current := Transcript instVarNamed: 'stream'.
-	current isNil ifTrue: [ current := Transcript stream ].
-	(current isKindOf: self) ifTrue: [ ^ self ].
-	Transcript instVarNamed: 'stream' put: (self new original: current; yourself)
+	(Smalltalk globals at: #Transcript) class == StLiveTranscriptProxy ifTrue: [ ^ self ].
+	"Headless images: the Transcript writes to a replaceable stream."
+	(Transcript class allInstVarNames includes: #stream)
+		ifTrue: [
+			current := Transcript instVarNamed: 'stream'.
+			current isNil ifTrue: [ current := Transcript stream ].
+			(current isKindOf: self) ifTrue: [ ^ self ].
+			^ Transcript instVarNamed: 'stream' put: (self new original: current; yourself) ].
+	"GUI images (StThreadSafeTranscript, announcer based): stand in for the global."
+	Smalltalk globals at: #Transcript put: (StLiveTranscriptProxy new original: Transcript; yourself)
 ]
 
 { #category : 'accessing' }

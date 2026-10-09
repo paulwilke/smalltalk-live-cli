@@ -7,6 +7,7 @@
 //!             3 image not running or unreachable · 4 protocol error · 5 timeout
 
 mod init;
+mod platform;
 mod save;
 
 use clap::{Parser, Subcommand};
@@ -63,7 +64,7 @@ enum Cmd {
         /// Port of the running server (its state file: <dir>/<instance>.port.json)
         #[arg(long)]
         port: u16,
-        /// Process id of that image (found with lsof if omitted)
+        /// Process id of that image (found automatically if omitted (lsof or netstat))
         #[arg(long)]
         pid: Option<i32>,
     },
@@ -77,6 +78,9 @@ enum Cmd {
         /// Image prepared with the StLive package (remembered per instance)
         #[arg(long, env = "STLIVE_IMAGE")]
         image: Option<PathBuf>,
+        /// Start Pharo WITH its window (Morphic/Spec/Bloc development) instead of headless; everything else is the same
+        #[arg(long)]
+        gui: bool,
     },
     /// Stop the image (destructive: unsaved state and debug sessions are lost)
     Stop {
@@ -106,6 +110,9 @@ enum Cmd {
         /// Leave the statement text out of error frames
         #[arg(long)]
         no_source: bool,
+        /// Run in the GUI image's UI process (safe for Spec/Morphic changes; needs `start --gui`)
+        #[arg(long)]
+        ui: bool,
     },
     /// Inspect objects by reference
     #[command(subcommand)]
@@ -128,6 +135,16 @@ enum Cmd {
     /// Packages
     #[command(subcommand)]
     Package(PackageCmd),
+    /// Windows of a GUI image (start it with `start --gui`): list, screenshot, press buttons
+    #[command(subcommand)]
+    Ui(UiCmd),
+    /// Open a URL in a chromeless app window (Chrome/Edge --app), e.g. the web UI of your application
+    OpenUi {
+        url: String,
+        /// Browser executable or app name (default: Chrome on macOS, Edge on Windows, first Chrome/Chromium found on Linux)
+        #[arg(long)]
+        browser: Option<String>,
+    },
     /// Debug sessions
     #[command(subcommand)]
     Debug(DebugCmd),
@@ -228,6 +245,8 @@ enum MethodCmd {
         /// Read the source from a file ('-' = stdin)
         #[arg(long)] file: Option<PathBuf>,
         #[arg(long)] protocol: Option<String>,
+        /// Compile in the UI process (open Spec/Morphic windows are rebuilt safely; needs `start --gui`)
+        #[arg(long)] ui: bool,
     },
     /// Remove a method (destructive)
     Remove { class: String, selector: String, #[arg(long)] force: bool },
@@ -240,6 +259,28 @@ enum ChangesCmd {
     /// Stream new changes as JSON lines until interrupted (polls every --interval ms)
     Watch { #[arg(long, default_value_t = 500)] interval: u64 },
     Show { index: u64 },
+}
+
+#[derive(Subcommand)]
+enum UiCmd {
+    /// Open windows with title, presenter class, bounds and an object reference
+    Windows,
+    /// PNG of the whole world or one window (index from `ui windows` or part of the title)
+    Screenshot {
+        #[arg(long)]
+        window: Option<String>,
+        /// Output file (default: <state dir>/screenshots/<instance>-<time>.png)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Press a button by its label (or the presenter variable name) inside the UI process
+    Press {
+        target: String,
+        #[arg(long)]
+        window: Option<String>,
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -283,7 +324,7 @@ enum DebugCmd {
     /// Receiver of a frame as an inspectable object
     Receiver { session: String, frame_pos: Option<u64>, #[arg(long)] frame: Option<u64> },
     /// Evaluate code in a frame (temporaries visible; --frame N, default 0 = top frame)
-    Eval { session: String, code: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64>, #[arg(long)] full: bool, #[arg(long)] no_session: bool },
+    Eval { session: String, code: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64>, #[arg(long)] full: bool, #[arg(long)] no_session: bool, #[arg(long)] ui: bool },
     /// CONTINUE the suspended execution (does not re-run; does not prove a fix)
     Resume { session: String, /// Smalltalk expression whose value the failed send answers
         #[arg(long)] value: Option<String>, #[arg(long)] timeout: Option<u64> },
@@ -332,7 +373,7 @@ impl Instance {
         std::fs::read_to_string(self.path("pid")).ok()?.trim().parse().ok()
     }
     fn alive(&self) -> bool {
-        self.pid().map(|p| unsafe { libc::kill(p, 0) == 0 }).unwrap_or(false)
+        self.pid().map(platform::pid_alive).unwrap_or(false)
     }
 }
 
@@ -586,7 +627,7 @@ fn list_instances(inst: &Instance, pretty: bool) {
     emit(&json!({"ok": true, "result": {"state_dir": inst.dir, "instances": list}}), pretty);
 }
 
-fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, pretty: bool) {
+fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool, pretty: bool) {
     if inst.alive() && inst.port_info().is_some() {
         let r = call(inst, "ping", json!({}), Duration::from_secs(3), pretty);
         if r["ok"] == json!(true) {
@@ -611,6 +652,12 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, pretty: b
             None => die(2, "not_initialized", "No Pharo set up yet. Run `stlive init` once (downloads Pharo 13 and builds the image), or pass --vm and --image.".into(), pretty),
         },
     };
+    // A deleted instance image is rebuilt from the template.
+    if !image.exists() && image.parent() == Some(inst.dir.as_path()) {
+        if let Some((_, timg)) = init::template(&init::home_dir()) {
+            let _ = init::instance_image(&timg, &inst.dir, &inst.name);
+        }
+    }
     let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let (vm, image) = (abs(&vm), abs(&image));
     let _ = std::fs::create_dir_all(&inst.dir);
@@ -623,9 +670,9 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, pretty: b
     let _ = std::fs::write(&serve, SERVE_ST);
     let _ = std::fs::remove_file(inst.path("port.json"));
     let log = std::fs::File::create(inst.path("log")).expect("cannot create log file");
-    use std::os::unix::process::CommandExt;
-    let child = Command::new(&vm)
-        .arg("--headless")
+    let mut cmd = Command::new(&vm);
+    cmd
+        .args(if gui { vec![] } else { vec!["--headless"] })
         .arg(&image)
         .arg("st")
         .arg(&serve)
@@ -634,8 +681,9 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, pretty: b
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
         .stderr(log)
-        .process_group(0)
-        .spawn();
+    ;
+    platform::detach(&mut cmd);
+    let child = cmd.spawn();
     let child = match child {
         Ok(c) => c,
         Err(e) => die(3, "spawn_failed", format!("Cannot start {}: {}", vm.display(), e), pretty),
@@ -666,7 +714,7 @@ fn stop(inst: &Instance, force: bool, pretty: bool) {
     }
     if inst.alive() {
         if let Some(p) = inst.pid() {
-            unsafe { libc::kill(p, libc::SIGKILL) };
+            platform::kill_pid(p);
         }
     }
     let _ = std::fs::remove_file(inst.path("port.json"));
@@ -777,8 +825,7 @@ fn attach(inst: &Instance, old_port: u16, pid: Option<i32>, pretty: bool) {
         std::process::exit(1);
     }
     let pid = pid.or_else(|| {
-        let out = Command::new("lsof").args(["-ti", &format!("tcp:{}", old_port), "-sTCP:LISTEN"]).output().ok()?;
-        String::from_utf8_lossy(&out.stdout).lines().next()?.trim().parse().ok()
+        platform::pid_listening_on(old_port)
     });
     if let Some(p) = pid {
         let _ = std::fs::write(inst.path("pid"), p.to_string());
@@ -810,7 +857,7 @@ fn clone_image(inst: &Instance, name: &str, start_it: bool, pretty: bool) {
     let clone_inst = Instance { dir: inst.dir.clone(), name: name.to_string() };
     let _ = std::fs::write(clone_inst.path("config.json"), json!({"vm": vm, "image": new_image}).to_string());
     if start_it {
-        return start(&clone_inst, Some(vm), Some(new_image), pretty);
+        return start(&clone_inst, Some(vm), Some(new_image), false, pretty);
     }
     emit(&json!({"ok": true, "result": {"instance": name, "image": new_image, "start": format!("stlive -i {} start", name)}}), pretty);
 }
@@ -826,6 +873,28 @@ fn main() {
 
     let (cmd, args, timeout_ms): (String, Value, Option<u64>) = match cli.cmd {
         Cmd::Attach { port, pid } => return attach(&inst, port, pid, pretty),
+        Cmd::OpenUi { url, browser } => return open_ui(&url, browser, pretty),
+        Cmd::Ui(u) => match u {
+            UiCmd::Windows => ("ui.windows".into(), json!({}), None),
+            UiCmd::Screenshot { window, out } => {
+                let path = out.unwrap_or_else(|| {
+                    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                    inst.dir.join("screenshots").join(format!("{}-{}.png", inst.name, ms))
+                });
+                let path = if path.is_absolute() { path } else { std::env::current_dir().unwrap_or_default().join(path) };
+                let mut m = Map::new();
+                m.insert("path".into(), path.display().to_string().into());
+                opt(&mut m, "window", window);
+                ("ui.screenshot".into(), Value::Object(m), None)
+            }
+            UiCmd::Press { target, window, timeout } => {
+                let mut m = Map::new();
+                m.insert("target".into(), target.into());
+                opt(&mut m, "window", window);
+                opt(&mut m, "timeout", timeout);
+                ("ui.press".into(), Value::Object(m), timeout)
+            }
+        },
         Cmd::Init { force, vm, image } => {
             let home = init::home_dir();
             match init::init(&home, force, vm.zip(image)) {
@@ -834,17 +903,18 @@ fn main() {
             }
         }
         Cmd::Instances => return list_instances(&inst, pretty),
-        Cmd::Start { vm, image } => return start(&inst, vm, image, pretty),
+        Cmd::Start { vm, image, gui } => return start(&inst, vm, image, gui, pretty),
         Cmd::Stop { force } => return stop(&inst, force, pretty),
         Cmd::Status => ("status".into(), json!({}), None),
         Cmd::Ping => ("ping".into(), json!({}), None),
-        Cmd::Eval { code, receiver, timeout, full, no_session, no_source } => {
+        Cmd::Eval { code, receiver, timeout, full, no_session, no_source, ui } => {
             let code = if code == "-" { read_stdin() } else { code };
             let mut m = Map::new();
             m.insert("code".into(), code.into());
             if full { m.insert("full".into(), true.into()); }
             if no_session { m.insert("no_session".into(), true.into()); }
             if no_source { m.insert("no_source".into(), true.into()); }
+            if ui { m.insert("ui".into(), true.into()); }
             opt(&mut m, "in", receiver);
             opt(&mut m, "timeout", timeout);
             ("eval".into(), Value::Object(m), timeout)
@@ -928,7 +998,7 @@ fn main() {
         },
         Cmd::Method(mc) => match mc {
             MethodCmd::Show { target } => ("method.show".into(), json!({"target": target}), None),
-            MethodCmd::Compile { class, source_arg, source, file, protocol } => {
+            MethodCmd::Compile { class, source_arg, source, file, protocol, ui } => {
                 let source = source.or(source_arg);
                 let source = match (source, file) {
                     (Some(s), _) if s != "-" => s,
@@ -941,6 +1011,7 @@ fn main() {
                 m.insert("class".into(), class.into());
                 m.insert("source".into(), source.into());
                 opt(&mut m, "protocol", protocol);
+                if ui { m.insert("ui".into(), true.into()); }
                 ("method.compile".into(), Value::Object(m), None)
             }
             MethodCmd::Remove { class, selector, force } => ("method.remove".into(), json!({"class": class, "selector": selector, "force": force}), None),
@@ -990,7 +1061,7 @@ fn main() {
             DebugCmd::Frame { session, index, frame, no_source } => ("debug.frame".into(), json!({"session": session, "frame": index.or(frame).unwrap_or(0), "no_source": no_source}), None),
             DebugCmd::Locals { session, frame_pos, frame } => ("debug.locals".into(), json!({"session": session, "frame": frame_pos.or(frame).unwrap_or(0)}), None),
             DebugCmd::Receiver { session, frame_pos, frame } => ("debug.receiver".into(), json!({"session": session, "frame": frame_pos.or(frame).unwrap_or(0)}), None),
-            DebugCmd::Eval { session, code, frame, timeout, full, no_session } => {
+            DebugCmd::Eval { session, code, frame, timeout, full, no_session, ui } => {
                 let code = if code == "-" { read_stdin() } else { code };
                 let mut m = Map::new();
                 m.insert("session".into(), session.into());
@@ -998,6 +1069,7 @@ fn main() {
                 m.insert("frame".into(), frame.into());
                 if full { m.insert("full".into(), true.into()); }
                 if no_session { m.insert("no_session".into(), true.into()); }
+                if ui { m.insert("ui".into(), true.into()); }
                 opt(&mut m, "timeout", timeout);
                 ("debug.eval".into(), Value::Object(m), timeout)
             }
@@ -1061,4 +1133,32 @@ fn main() {
         write_log(path, cli.tag.as_deref(), &inst.name, &cmd, &summary, started.elapsed(), &resp, code);
     }
     std::process::exit(code);
+}
+
+/// Open `url` in a chromeless application window (Chrome/Edge `--app=`), the web-UI way of "developing a window".
+fn open_ui(url: &str, browser: Option<String>, pretty: bool) {
+    let app = format!("--app={}", url);
+    let status = if cfg!(target_os = "macos") {
+        let name = browser.unwrap_or_else(|| "Google Chrome".into());
+        Command::new("open").args(["-na", &name, "--args", &app]).status()
+    } else if cfg!(target_os = "windows") {
+        let exe = browser.unwrap_or_else(|| "msedge".into());
+        Command::new("cmd").args(["/C", "start", "", &exe, &app]).status()
+    } else {
+        let candidates = match browser {
+            Some(b) => vec![b],
+            None => ["google-chrome", "chromium", "chromium-browser", "microsoft-edge"].iter().map(|s| s.to_string()).collect(),
+        };
+        let mut last = Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no Chrome/Chromium/Edge found; pass --browser"));
+        for c in candidates {
+            last = Command::new(&c).arg(&app).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| std::process::ExitStatus::default());
+            if last.is_ok() { break; }
+        }
+        last
+    };
+    match status {
+        Ok(s) if s.success() => emit(&json!({"ok": true, "result": {"opened": url}}), pretty),
+        Ok(s) => die(1, "open_failed", format!("browser launcher exited with {}", s), pretty),
+        Err(e) => die(1, "open_failed", e.to_string(), pretty),
+    }
 }

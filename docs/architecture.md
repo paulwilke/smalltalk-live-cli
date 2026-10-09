@@ -36,3 +36,13 @@ The image records every change made through the CLI (`changes.pending`). The CLI
 
 ## Layout
 `src/` Rust client (`main.rs`, `save.rs`, `init.rs`) · `smalltalk/src/StLive` server (Commands, Server, Job, Session, ErrorHandler, Describer, TranscriptTee, Failure) · `tests/e2e.sh` · `skill/` agent instructions.
+
+## GUI mode and the UI process
+`start --gui` only omits `--headless`; the server is the same. What changes is who may touch live Morphic/Spec objects:
+
+- **Threads.** Morphic draws and lays out in *one* UI process. Changing a presenter from another process can race with drawing, so `--ui` (`eval`, `debug eval`, `method compile`, `ui press`) hands the work to that process with `UIManager default defer:`. Without `--ui`, evaluations run in a worker process as in headless mode – fine for data, risky for widgets.
+- **Errors in the UI process.** If the failing process *is* the UI process, merely suspending it (what headless mode does) would freeze the whole GUI. stlive therefore does what Pharo's own debugger does: it starts a new UI process (`UIManager default spawnNewProcess`) first and only then registers the session and suspends the old one. After `debug resume` the old UI process notices it was replaced and terminates instead of returning to the render loop. Errors that happen *outside* stlive requests (a user clicking, a timer) still open the normal Pharo debugger – stlive only takes over what it started.
+- **Busy UI.** If the UI process does not pick up a deferred request in time (a modal dialog, a long computation) the request is cancelled and answered with `ui_unavailable`; nothing was run.
+- **Transcript.** GUI images use an announcer-based Transcript without a replaceable stream, so the global `Transcript` is replaced by a forwarding proxy that captures text written by stlive jobs and passes everything else to the real Transcript (its window keeps working).
+- **Screenshots** render a window (or the world) off its own morph tree with `imageForm`, so they work even when the window is obscured; the PNG is written by the image (default `./.stlive/screenshots/`).
+- **Saving.** `image save` snapshots without dialogs; suspended sessions would be saved as dead processes, which is why the result reports them.

@@ -72,6 +72,20 @@ Then just ask: *"The test `CartTest` fails – find the cause with stlive, fix i
 - **Real Pharo.** Fixes are compiled by Pharo's own compiler into the live image; debugging uses Pharo's own debug machinery.
 - **Round trip to your repo.** `save` patches Tonel files method by method, so code review stays readable.
 
+## Developing a window (GUI mode)
+
+```bash
+stlive start --gui                      # Pharo opens WITH its window and stays connected
+stlive eval --ui - <<< "MyPresenter new open. 1"                 # --ui: run in the UI process (safe for Spec/Morphic)
+stlive eval --ui "(Smalltalk at: #App) labelPresenter label: 'Hello'. 1"
+stlive ui windows                       # titles, presenter classes, bounds
+stlive ui screenshot --window Demo      # PNG -> ./.stlive/screenshots/…   (look at it, or let the agent look)
+stlive ui press Increment               # click a button by its label
+stlive method compile MyPresenter --ui --file new.st    # change code while the window is open
+```
+
+An error inside the UI process becomes an ordinary stlive debug session – **no Pharo debugger window** appears and the GUI keeps running. That gives agents the loop *change → look → check* for Spec2/Morphic now (Bloc/Toplo are the same idea). For web UIs use `stlive open-ui http://localhost:8080` (a chromeless Chrome/Edge window). Details: [docs/architecture.md](docs/architecture.md#gui-mode-and-the-ui-process).
+
 ## Install
 
 Requirements: macOS or Linux (x86-64/arm64 where Pharo 13 VMs exist), `curl`, `unzip`, a [Rust toolchain](https://rustup.rs) to build, and `jq` for the examples.
@@ -115,6 +129,7 @@ An image started by an older version of this tool (or any server that speaks the
 
 | Area | Commands |
 |---|---|
+| Window | `start --gui`, `eval/compile --ui`, `ui windows\|screenshot\|press`, `open-ui` |
 | Image | `init` (`--vm`/`--image` for a local Pharo), `attach`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` |
 | Evaluate | `eval` (stdin with `-`, `--in <ref>` as receiver, `--timeout`, `--full` complete text, `--no-session`; Transcript and deprecations reported separately) |
 | Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment), `method show\|compile\|remove`, `package list`, `changes list\|show\|watch` |
@@ -136,6 +151,8 @@ Short version: this is a CLI because a shell is the one integration point every 
 - References and sessions carry the image's run id, so they are rejected as `stale_ref` after a restart rather than silently pointing at something else.
 
 ## Limitations
+
+- GUI mode is verified with Spec2/Morphic on macOS (Pharo 13). Windows support is written (separate `platform.rs`, builds for the Windows target) but has not been run on Windows.
 
 - Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).

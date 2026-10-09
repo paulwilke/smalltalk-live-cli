@@ -30,17 +30,18 @@ const SOURCES: &[(&str, &str)] = &[
     ("StLive/StLiveServer.class.st", include_str!("../smalltalk/src/StLive/StLiveServer.class.st")),
     ("StLive/StLiveSession.class.st", include_str!("../smalltalk/src/StLive/StLiveSession.class.st")),
     ("StLive/StLiveTranscriptTee.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptTee.class.st")),
+    ("StLive/StLiveTranscriptProxy.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptProxy.class.st")),
 ];
 
 pub fn home_dir() -> PathBuf {
     if let Ok(h) = std::env::var("STLIVE_HOME") {
         return PathBuf::from(h);
     }
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".stlive")
+    crate::platform::home().join(".stlive")
 }
 
 fn find_vm(pharo_dir: &Path) -> Option<PathBuf> {
-    ["pharo-vm/Pharo.app/Contents/MacOS/Pharo", "pharo-vm/pharo", "pharo-vm/bin/pharo"]
+    crate::platform::vm_candidates()
         .iter()
         .map(|p| pharo_dir.join(p))
         .find(|p| p.exists())
@@ -81,16 +82,14 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
             for e in rd.flatten() {
                 if e.path().extension().map(|x| x == "sources").unwrap_or(false) {
                     let link = pharo_dir.join(e.file_name());
-                    if !link.exists() { let _ = std::os::unix::fs::symlink(e.path(), link); }
+                    if !link.exists() { crate::platform::link_or_copy(&e.path(), &link); }
                 }
             }
         }
         let _ = lvm;
     } else if force || !pharo_dir.join("Pharo.image").exists() || find_vm(&pharo_dir).is_none() {
         eprintln!("stlive: downloading Pharo 13 (VM + image, ~100 MB) from get.pharo.org ...");
-        let script = pharo_dir.join("get-pharo.sh");
-        run(Command::new("curl").args(["-fsSL", "-o"]).arg(&script).arg("https://get.pharo.org/64/130+vm"), "download of get.pharo.org script (is curl installed?)")?;
-        run(Command::new("bash").arg(&script).current_dir(&pharo_dir), "Pharo download (needs curl and unzip)")?;
+        crate::platform::download_pharo(&pharo_dir)?;
     }
     let vm = match &local {
         Some((lvm, _)) => std::fs::canonicalize(lvm).map_err(|e| format!("{}: {}", lvm.display(), e))?,
@@ -146,7 +145,7 @@ pub fn instance_image(template_image: &Path, dest_dir: &Path, name: &str) -> Res
             if e.path().extension().map(|x| x == "sources").unwrap_or(false) {
                 let link = dest_dir.join(e.file_name());
                 if !link.exists() {
-                    let _ = std::os::unix::fs::symlink(e.path(), link);
+                    crate::platform::link_or_copy(&e.path(), &link);
                 }
             }
         }

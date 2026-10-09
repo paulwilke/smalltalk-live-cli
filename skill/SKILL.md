@@ -32,6 +32,10 @@ stlive image info                             # version, loaded packages, unsave
 7. **Persist**: changes made through the CLI live only in the image. `changes list|show` (unified diff), then `save --package <Pkg> --dir <repo>/src [--dry-run]` or `save --all --dir <repo>/src`. Packages come from `changes list` (`unsaved_by_package`) or a frame's `package`. Check `git diff` – it should be minimal – and commit with git.
 8. **Clean up**: `debug terminate --all` (sessions of failing tests stay suspended; max 60 are kept).
 
+## Windows and GUIs
+
+For Spec2/Morphic development start the image with `stlive start --gui` and use `--ui` on `eval` / `method compile` so changes run in the UI process. `stlive ui windows` lists windows, `stlive ui screenshot --window <title>` writes a PNG you can look at, `stlive ui press <label>` clicks a button. Errors in the UI become sessions (no Pharo debugger opens) – debug them like any other session. Without `--ui`, evaluations run in a worker process (fine for data, not for widgets).
+
 ## Practical tips
 - Quoting: code with Smalltalk string literals (`'…'`) inside a single-quoted shell argument loses its quotes; use stdin: `stlive eval - <<'EOF' … EOF`.
 - `print` fields are truncated at 120 characters; get the full text with `obj text <ref>` or page with `obj items`.

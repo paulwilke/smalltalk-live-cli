@@ -241,6 +241,12 @@ StLiveCommands >> awaitJob: job timeout: ms mode: mode from: previousSession [
 	event := job waitEvent: ms.
 	event == #timeout ifTrue: [ event := job interrupt ].
 	report := nil.
+	event == #unavailable ifTrue: [
+		^ OrderedDictionary new
+			at: 'ok' put: false;
+			at: 'mode' put: mode;
+			at: 'error' put: (self m: { 'code' -> 'ui_unavailable'. 'type' -> 'UiUnavailable'. 'kind' -> 'ui_unavailable'. 'message' -> 'The UI process did not pick up the request in time (busy, or a modal dialog is open). Nothing was run.' });
+			yourself ].
 	event == #error ifTrue: [
 		session := job session.
 		session awaitParked.
@@ -283,9 +289,15 @@ StLiveCommands >> annotate: result mode: mode [
 
 { #category : 'jobs' }
 StLiveCommands >> runBlock: aBlock origin: origin timeout: ms mode: mode [
+	^ self runBlock: aBlock origin: origin timeout: ms mode: mode ui: false
+]
+
+{ #category : 'jobs' }
+StLiveCommands >> runBlock: aBlock origin: origin timeout: ms mode: mode ui: runInUI [
 	| job |
+	runInUI ifTrue: [ self requireGui ].
 	job := server newJob: aBlock origin: origin.
-	job start.
+	runInUI ifTrue: [ job startInUI ] ifFalse: [ job start ].
 	^ self awaitJob: job timeout: ms mode: mode from: nil
 ]
 
@@ -385,8 +397,13 @@ StLiveCommands >> cmdLoadBaseline: args [
 
 { #category : 'runtime' }
 StLiveCommands >> cmdImageSave: args [
+	| suspended |
+	suspended := server sessions values count: [ :s | s isSuspended ].
 	Smalltalk snapshot: true andQuit: false.
-	^ self ok: (self m: { 'saved' -> true })
+	^ self ok: (self m: {
+		'saved' -> true.
+		'suspended_sessions' -> suspended.
+		'note' -> (suspended > 0 ifTrue: [ 'Suspended debug sessions were saved as dead processes; they are not usable after a restart (end them with `debug terminate --all` before saving).' ]) })
 ]
 
 { #category : 'runtime' }
@@ -409,7 +426,8 @@ StLiveCommands >> cmdEval: args [
 		runBlock: [ holder := method valueWithReceiver: receiver arguments: #() ]
 		origin: (self originCmd: 'eval' args: args)
 		timeout: timeout
-		mode: 'first'.
+		mode: 'first'
+		ui: (args at: 'ui' ifAbsent: [ false ]) == true.
 	(response at: 'ok') ifTrue: [ self addFullText: (response at: 'result') value: holder args: args ].
 	^ self finishEval: response args: args
 ]
@@ -782,6 +800,14 @@ StLiveCommands >> staleFramesFor: oldMethod [
 
 { #category : 'code' }
 StLiveCommands >> cmdMethodCompile: args [
+	"With ui: true the compile runs in the UI process, so open Spec/Morphic windows are rebuilt safely."
+	^ (args at: 'ui' ifAbsent: [ false ]) == true
+		ifTrue: [ self onUI: [ self compileMethod: args ] timeout: 30000 ]
+		ifFalse: [ self compileMethod: args ]
+]
+
+{ #category : 'code' }
+StLiveCommands >> compileMethod: args [
 	| cls source protocol old new selector entry |
 	cls := self classNamed: (self need: 'class' in: args).
 	source := self lf: (self need: 'source' in: args) trimRight.
@@ -1168,7 +1194,8 @@ StLiveCommands >> cmdDebugEval: args [
 		runBlock: [ holder := compiler evaluate ]
 		origin: (self originCmd: 'debug.eval' args: args)
 		timeout: (self int: 'timeout' in: args default: 30000)
-		mode: 'first'.
+		mode: 'first'
+		ui: (args at: 'ui' ifAbsent: [ false ]) == true.
 	(response at: 'ok') ifTrue: [ self addFullText: (response at: 'result') value: holder args: args ].
 	^ self finishEval: response args: args
 ]
@@ -1255,4 +1282,149 @@ StLiveCommands >> cmdDebugTerminate: args [
 	s := self session: args.
 	server terminateSession: s.
 	^ self ok: (self m: { 'terminated' -> 1. 'session' -> s id })
+]
+
+{ #category : 'ui' }
+StLiveCommands >> requireGui [
+	UIManager default class == MorphicUIManager
+		ifFalse: [ self fail: 'gui_required' message: 'This image runs without a GUI. Start it with: stlive start --gui' ]
+]
+
+{ #category : 'ui' }
+StLiveCommands >> onUI: aBlock timeout: ms [
+	"Run aBlock in the UI process and answer its value. Failures are re-signalled in the calling process, so the
+	Pharo debugger never opens for stlive requests."
+	| done result failure abandoned |
+	self requireGui.
+	done := Semaphore new.
+	abandoned := false.
+	UIManager default defer: [
+		abandoned ifFalse: [
+			[ result := aBlock value ] on: Error do: [ :e | failure := e. e return ] ].
+		done signal ].
+	(done waitTimeoutMSecs: ms) ifTrue: [
+		abandoned := true.
+		self fail: 'ui_unavailable' message: 'The UI process did not run the request within ' , ms printString , ' ms (busy, or a modal dialog is open). Nothing was changed.' ].
+	failure ifNotNil: [
+		(failure isKindOf: StLiveFailure) ifTrue: [ ^ failure signal ].
+		self fail: 'ui_error' message: failure class name , ': ' , ([ failure messageText asString ] on: Error do: [ :e | '?' ]) ].
+	^ result
+]
+
+{ #category : 'ui' }
+StLiveCommands >> windowMorphs [
+	"Open windows, frontmost first."
+	^ World submorphs select: [ :m | m isSystemWindow ]
+]
+
+{ #category : 'ui' }
+StLiveCommands >> describeWindow: aWindow index: i [
+	| model presenter b |
+	model := [ aWindow model ] on: Error do: [ :e | nil ].
+	presenter := (model notNil and: [ model respondsTo: #presenter ]) ifTrue: [ [ model presenter ] on: Error do: [ :e | nil ] ] ifFalse: [ nil ].
+	b := aWindow bounds.
+	^ self m: {
+		'index' -> i.
+		'title' -> ([ aWindow label asString ] on: Error do: [ :e | '' ]).
+		'class' -> aWindow class name.
+		'presenter' -> (presenter ifNotNil: [ :p | p class name ]).
+		'bounds' -> (self m: { 'x' -> b left. 'y' -> b top. 'width' -> b width. 'height' -> b height }).
+		'ref' -> (server refFor: aWindow) }
+]
+
+{ #category : 'ui' }
+StLiveCommands >> windowFor: spec [
+	"spec: 1-based index (from ui windows) or a part of the title; nil answers nil."
+	| windows n |
+	spec ifNil: [ ^ nil ].
+	windows := self windowMorphs.
+	n := spec isInteger ifTrue: [ spec ] ifFalse: [ spec asString asInteger ].
+	n ifNotNil: [ ^ windows at: n ifAbsent: [ self fail: 'unknown_window' message: 'No window ' , n printString , ' (' , windows size printString , ' open); see: stlive ui windows' ] ].
+	^ windows detect: [ :w | ([ w label asString ] on: Error do: [ :e | '' ]) asLowercase includesSubstring: spec asString asLowercase ]
+		ifNone: [ self fail: 'unknown_window' message: 'No window whose title contains ' , spec printString , '; see: stlive ui windows' ]
+]
+
+{ #category : 'ui' }
+StLiveCommands >> cmdUiWindows: args [
+	| list |
+	list := self onUI: [ self windowMorphs withIndexCollect: [ :w :i | self describeWindow: w index: i ] ] timeout: 10000.
+	^ self ok: (self m: {
+		'windows' -> list asArray.
+		'world_extent' -> (self onUI: [ World extent printString ] timeout: 10000) })
+]
+
+{ #category : 'ui' }
+StLiveCommands >> cmdUiScreenshot: args [
+	"PNG of one window (index or title part) or of the whole world, written to the given path."
+	| path info |
+	path := self need: 'path' in: args.
+	info := self onUI: [
+		| window form target |
+		window := self windowFor: (args at: 'window' ifAbsent: [ nil ]).
+		form := window ifNil: [ World imageForm ] ifNotNil: [ :w | w imageForm ].
+		target := path asFileReference.
+		target parent ensureCreateDirectory.
+		PNGReadWriter putForm: form onFileNamed: target fullName.
+		self m: {
+			'path' -> target fullName.
+			'width' -> form width.
+			'height' -> form height.
+			'bytes' -> target size.
+			'window' -> (window ifNotNil: [ :w | ([ w label asString ] on: Error do: [ :e | '' ]) ]) } ] timeout: 15000.
+	^ self ok: info
+]
+
+{ #category : 'ui' }
+StLiveCommands >> buttonMatching: target in: aWindow [
+	"A button morph whose label equals target (case-insensitive), or the button presenter held in an
+	instance variable of the window's presenter named target. Answers a block that presses it, or nil."
+	| wanted model presenter |
+	wanted := target asString trimBoth asLowercase.
+	(aWindow allMorphs select: [ :m | m isKindOf: PluggableButtonMorph ]) do: [ :m |
+		(([ m label asString ] on: Error do: [ :e | '' ]) trimBoth asLowercase = wanted) ifTrue: [ ^ [ m performAction ] ] ].
+	model := [ aWindow model ] on: Error do: [ :e | nil ].
+	presenter := (model notNil and: [ model respondsTo: #presenter ]) ifTrue: [ [ model presenter ] on: Error do: [ :e | nil ] ] ifFalse: [ nil ].
+	presenter ifNotNil: [
+		presenter class allInstVarNames withIndexDo: [ :n :i |
+			| v |
+			v := presenter instVarAt: i.
+			(n asLowercase = wanted and: [ v isKindOf: SpButtonPresenter ]) ifTrue: [ ^ [ v click ] ] ] ].
+	^ nil
+]
+
+{ #category : 'ui' }
+StLiveCommands >> buttonLabelsIn: aWindow [
+	^ (((aWindow allMorphs select: [ :m | m isKindOf: PluggableButtonMorph ]) collect: [ :m | [ m label ] on: Error do: [ :e | nil ] ]) select: [ :l | l isString or: [ l isText ] ]) collect: [ :l | l asString ]
+]
+
+{ #category : 'ui' }
+StLiveCommands >> cmdUiPress: args [
+	"Press a button by its label (or the presenter variable name). The click runs in the UI process under
+	stlive's error handling: a failing action becomes a debug session, not a Pharo debugger window."
+	| target found response |
+	target := self need: 'target' in: args.
+	found := self onUI: [
+		| candidates hit |
+		candidates := (args at: 'window' ifAbsent: [ nil ]) ifNil: [ self windowMorphs ] ifNotNil: [ :spec | { self windowFor: spec } ].
+		hit := nil.
+		candidates do: [ :w |
+			hit ifNil: [ (self buttonMatching: target in: w) ifNotNil: [ :action | hit := { action. w } ] ] ].
+		hit ifNil: [
+			| labels |
+			labels := (candidates flatCollect: [ :w | self buttonLabelsIn: w ]) asArray.
+			self fail: 'no_such_button' message: 'No button ' , target printString , '. Buttons: ' , (labels first: (20 min: labels size)) printString ].
+		hit ] timeout: 10000.
+	response := self
+		runBlock: [ found first value ]
+		origin: (self originCmd: 'ui.press' args: args)
+		timeout: (self int: 'timeout' in: args default: 30000)
+		mode: 'first'
+		ui: true.
+	(response at: 'ok') ifTrue: [
+		| result |
+		result := response at: 'result'.
+		result removeKey: 'value'.
+		result at: 'pressed' put: target.
+		result at: 'window' put: ([ found last label asString ] on: Error do: [ :e | '' ]) ].
+	^ self finishEval: response args: args
 ]
