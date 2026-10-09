@@ -142,12 +142,21 @@ An image started by an older version of this tool (or any server that speaks the
 
 Full reference: [docs/commands.md](docs/commands.md). How it works: [docs/architecture.md](docs/architecture.md).
 
+## Delivering what you built
+
+```bash
+stlive image export dist/MyApp.image --force     # saves a copy WITHOUT the stlive server, then ends this instance
+```
+
+The delivered image contains your application but no stlive classes and no evaluation port (stlive's server is an open `eval` endpoint on localhost – never ship it). Start it with your own startup script. `stlive start` also keeps older images working: it upgrades the server inside an image automatically when the stlive binary is newer.
+
 ## Status and what is still open
 
 **Works and is tested** (52 headless + 19 GUI end-to-end checks on macOS arm64, Pharo 13): the whole debug loop, tests, Tonel write-back, eval-made change recording, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses.
 
 **Open / not yet verified:**
 - Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
+- Pharo 14 (needed for Spec-Gtk) is not part of this version; the differences live on the `pharo-14` branch.
 - Bloc/Toplo: the UI-process mechanism is the same, but `ui windows`/`ui press` currently understand Morphic-based windows only.
 - No single-stepping (step into/over), no capture of direct stdout/stderr writes, no authentication (loopback only) and no Unix-domain-socket transport.
 - No prebuilt binaries yet (installation needs a Rust toolchain), no SUnit tests for the Smalltalk side beyond the end-to-end scripts, and the skill has been tried on small cases only.

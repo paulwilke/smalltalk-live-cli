@@ -18,7 +18,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const SERVE_ST: &str = "(Smalltalk globals at: #StLiveServer) startFromEnvironment.\n";
 
 #[derive(Parser)]
 #[command(name = "stlive", version, about = "Work inside a live Pharo image: eval, inspect, debug, fix, re-run.")]
@@ -342,6 +341,17 @@ enum DebugCmd {
 enum ImageCmd {
     /// Snapshot the image to disk
     Save,
+    /// Save a copy of the image for delivery WITHOUT the stlive server (no open evaluation port), then stop this instance
+    Export {
+        /// Target image file, e.g. dist/MyApp.image (.changes and the sources file are written/copied next to it)
+        out: PathBuf,
+        /// Keep the stlive server in the exported image
+        #[arg(long)]
+        keep_server: bool,
+        /// Required: the instance ends after exporting
+        #[arg(long)]
+        force: bool,
+    },
     /// Version, image file, loaded non-system packages, unsaved changes, sessions
     Info,
     /// Save this instance's image and register a copy as a new instance (shares VM and sources file)
@@ -667,7 +677,8 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool
     }
     let _ = std::fs::write(&cfg_path, json!({"vm": vm, "image": image}).to_string());
     let serve = inst.path("serve.st");
-    let _ = std::fs::write(&serve, SERVE_ST);
+    let _ = std::fs::write(&serve, init::SERVE_ST);
+    let src_dir = init::write_sources(&init::home_dir()).ok();
     let _ = std::fs::remove_file(inst.path("port.json"));
     let log = std::fs::File::create(inst.path("log")).expect("cannot create log file");
     let mut cmd = Command::new(&vm);
@@ -678,6 +689,8 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool
         .arg(&serve)
         .arg("--no-quit")
         .env("STLIVE_PORTFILE", inst.path("port.json"))
+        .env("STLIVE_SOURCES_HASH", init::sources_hash())
+        .envs(src_dir.iter().map(|d| ("STLIVE_SRC", d.clone())))
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())
         .stderr(log)
@@ -811,9 +824,11 @@ fn attach(inst: &Instance, old_port: u16, pid: Option<i32>, pretty: bool) {
     let code = format!(
         "Metacello new baseline: 'StLive'; repository: 'tonel://{src}'; load.\n\
          (Smalltalk globals at: #StLiveServer) recordSystemPackagesFrom: #({list}).\n\
+         (Smalltalk globals at: #StLiveServer) installedHash: '{hash}'.\n\
          (Smalltalk globals at: #StLiveServer) current startPortFile: '{pf}'.",
         src = src.display(),
         list = list,
+        hash = init::sources_hash(),
         pf = portfile.display()
     );
     let tmp = Instance { dir: inst.dir.clone(), name: "attach-old".into() };
@@ -1105,6 +1120,7 @@ fn main() {
         },
         Cmd::Image(ImageCmd::Save) => ("image.save".into(), json!({}), None),
         Cmd::Image(ImageCmd::Info) => ("image.info".into(), json!({}), None),
+        Cmd::Image(ImageCmd::Export { out, keep_server, force }) => return export_image(&inst, &out, keep_server, force, pretty),
         Cmd::Image(ImageCmd::Clone { name, start: do_start }) => return clone_image(&inst, &name, do_start, pretty),
         Cmd::Save { package, all, dir, dry_run } => return save_changes(&inst, package, all, &dir, dry_run, pretty),
         Cmd::Load { baseline, repository, groups, timeout } => {
@@ -1161,4 +1177,48 @@ fn open_ui(url: &str, browser: Option<String>, pretty: bool) {
         Ok(s) => die(1, "open_failed", format!("browser launcher exited with {}", s), pretty),
         Err(e) => die(1, "open_failed", e.to_string(), pretty),
     }
+}
+
+/// Export the running image under a new name for delivery (server removed), stop the instance and complete the file set.
+fn export_image(inst: &Instance, out: &Path, keep_server: bool, force: bool, pretty: bool) {
+    if !force {
+        die(2, "confirmation_required", "Export saves the image under the new name and ends this instance; add --force.".into(), pretty);
+    }
+    let abs = if out.is_absolute() { out.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(out) };
+    let abs = if abs.extension().map(|e| e == "image").unwrap_or(false) { abs } else { abs.with_extension("image") };
+    if let Some(parent) = abs.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let r = call(inst, "image.export", json!({"path": abs.display().to_string(), "keep_server": keep_server, "force": true}), Duration::from_secs(60), pretty);
+    if r["ok"] != json!(true) {
+        emit(&r, pretty);
+        std::process::exit(1);
+    }
+    // the image saves itself and quits
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline && inst.alive() {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    if inst.alive() {
+        if let Some(p) = inst.pid() { platform::kill_pid(p); }
+    }
+    let _ = std::fs::remove_file(inst.path("port.json"));
+    let _ = std::fs::remove_file(inst.path("pid"));
+    // the sources file must sit next to the delivered image
+    let cfg: Value = std::fs::read_to_string(inst.path("config.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
+    let mut sources = None;
+    if let Some(src_dir) = cfg["image"].as_str().and_then(|i| Path::new(i).parent().map(|p| p.to_path_buf())) {
+        if let Ok(rd) = std::fs::read_dir(&src_dir) {
+            for e in rd.flatten() {
+                if e.path().extension().map(|x| x == "sources").unwrap_or(false) {
+                    let dest = abs.parent().unwrap().join(e.file_name());
+                    if std::fs::copy(e.path(), &dest).is_ok() { sources = Some(dest); }
+                }
+            }
+        }
+    }
+    let ok = abs.exists();
+    emit(&json!({"ok": ok, "result": {"image": abs, "changes": abs.with_extension("changes"), "sources": sources, "server_removed": !keep_server,
+        "note": "Start it with your VM and your own startup script; this image has no stlive port."}}), pretty);
+    if !ok { std::process::exit(1); }
 }

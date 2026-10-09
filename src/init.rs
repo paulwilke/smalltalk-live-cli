@@ -11,6 +11,7 @@ Metacello new
 	repository: 'tonel://' , src fullName;
 	load.
 (Smalltalk globals at: #StLiveServer) recordSystemPackages.
+(Smalltalk globals at: #StLiveServer) installedHash: (Smalltalk os environment at: 'STLIVE_SOURCES_HASH' ifAbsent: [ nil ]).
 (src parent / 'system-packages.txt') ensureDelete.
 (src parent / 'system-packages.txt') writeStreamDo: [ :out |
 	PackageOrganizer default packages do: [ :pk | out nextPutAll: pk name; lf ] ].
@@ -32,6 +33,37 @@ const SOURCES: &[(&str, &str)] = &[
     ("StLive/StLiveTranscriptTee.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptTee.class.st")),
     ("StLive/StLiveTranscriptProxy.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptProxy.class.st")),
 ];
+
+/// Startup script run by every `start`: upgrades the server inside the image if it was built from other sources, then starts it.
+pub const SERVE_ST: &str = r#"| env hash current |
+env := Smalltalk os environment.
+hash := env at: 'STLIVE_SOURCES_HASH' ifAbsent: [ nil ].
+current := (Smalltalk globals at: #StLiveServer ifAbsent: [ nil ]) ifNotNil: [ :c | (c respondsTo: #installedHash) ifTrue: [ c installedHash ] ].
+(hash notNil and: [ hash ~= current and: [ (env at: 'STLIVE_SRC' ifAbsent: [ nil ]) notNil ] ]) ifTrue: [
+	[ Metacello new baseline: 'StLive'; repository: 'tonel://' , (env at: 'STLIVE_SRC'); load.
+	(Smalltalk globals at: #StLiveServer) installedHash: hash ]
+		on: Error
+		do: [ :e | Stdio stdout nextPutAll: 'stlive: could not upgrade the server in this image: ' , e messageText asString; lf; flush ] ].
+(Smalltalk globals at: #StLiveServer) startFromEnvironment.
+"#;
+
+/// FNV-1a hash (hex) of everything that ends up inside the image: the Smalltalk sources and the scripts.
+pub fn sources_hash() -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut feed = |s: &str| {
+        for b in s.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    for (name, content) in SOURCES {
+        feed(name);
+        feed(content);
+    }
+    feed(PREPARE_ST);
+    feed(SERVE_ST);
+    format!("{:016x}", h)
+}
 
 pub fn home_dir() -> PathBuf {
     if let Ok(h) = std::env::var("STLIVE_HOME") {
@@ -112,6 +144,7 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
             .arg("st")
             .arg(home.join("prepare.st"))
             .env("STLIVE_SRC", &src)
+            .env("STLIVE_SOURCES_HASH", sources_hash())
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
         "image preparation",

@@ -1148,10 +1148,11 @@ Image persistence, info and cloning
 Usage: stlive image [OPTIONS] <COMMAND>
 
 Commands:
-  save   Snapshot the image to disk
-  info   Version, image file, loaded non-system packages, unsaved changes, sessions
-  clone  Save this instance's image and register a copy as a new instance (shares VM and sources file)
-  help   Print this message or the help of the given subcommand(s)
+  save    Snapshot the image to disk
+  export  Save a copy of the image for delivery WITHOUT the stlive server (no open evaluation port), then stop this instance
+  info    Version, image file, loaded non-system packages, unsaved changes, sessions
+  clone   Save this instance's image and register a copy as a new instance (shares VM and sources file)
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
@@ -1172,6 +1173,28 @@ Usage: stlive image save [OPTIONS]
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive image export`
+
+```
+Save a copy of the image for delivery WITHOUT the stlive server (no open evaluation port), then stop this instance
+
+Usage: stlive image export [OPTIONS] <OUT>
+
+Arguments:
+  <OUT>  Target image file, e.g. dist/MyApp.image (.changes and the sources file are written/copied next to it)
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --keep-server            Keep the stlive server in the exported image
+      --force                  Required: the instance ends after exporting
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]

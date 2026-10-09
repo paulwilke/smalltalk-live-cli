@@ -35,6 +35,11 @@ StLiveTranscriptTee class >> installUnsafely [
 ]
 
 { #category : 'accessing' }
+StLiveTranscriptTee >> original [
+	^ original
+]
+
+{ #category : 'accessing' }
 StLiveTranscriptTee >> original: aStream [
 	original := aStream
 ]
@@ -71,4 +76,18 @@ StLiveTranscriptTee >> close [
 { #category : 'writing' }
 StLiveTranscriptTee >> doesNotUnderstand: aMessage [
 	^ aMessage sendTo: original
+]
+
+{ #category : 'installing' }
+StLiveTranscriptTee class >> uninstall [
+	"Give the Transcript back its own stream / global (used before exporting an image without the server)."
+	| current |
+	[ (Smalltalk globals at: #Transcript) class == StLiveTranscriptProxy
+		ifTrue: [ Smalltalk globals at: #Transcript put: (Smalltalk globals at: #Transcript) original ]
+		ifFalse: [
+			(Transcript class allInstVarNames includes: #stream) ifTrue: [
+				current := Transcript instVarNamed: 'stream'.
+				(current isKindOf: self) ifTrue: [ Transcript instVarNamed: 'stream' put: current original ] ] ] ]
+		on: Error
+		do: [ :e | nil ]
 ]

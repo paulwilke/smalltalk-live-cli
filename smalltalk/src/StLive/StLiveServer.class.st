@@ -25,6 +25,7 @@ Class {
 	],
 	#classVars : [
 		'Current',
+		'InstalledHash',
 		'SystemPackages'
 	],
 	#package : 'StLive'
@@ -44,6 +45,23 @@ StLiveServer class >> recordSystemPackages [
 { #category : 'accessing' }
 StLiveServer class >> systemPackages [
 	^ SystemPackages ifNil: [ Set new ]
+]
+
+{ #category : 'accessing' }
+StLiveServer class >> reset [
+	"Forget the singleton (its listener was stopped)."
+	Current := nil
+]
+
+{ #category : 'accessing' }
+StLiveServer class >> installedHash [
+	"Hash of the embedded sources this image was loaded from (set by the CLI; used to detect stale servers)."
+	^ InstalledHash
+]
+
+{ #category : 'accessing' }
+StLiveServer class >> installedHash: aString [
+	InstalledHash := aString
 ]
 
 { #category : 'accessing' }

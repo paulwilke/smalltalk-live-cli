@@ -51,6 +51,7 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead â
 - Output of `Transcript show:` and deprecation warnings arrive in `result.output`, not mixed into values.
 - `eval --no-session` for exploratory snippets so typos do not leave suspended sessions; `eval --full` for the complete text of a value.
 - `obj graph <ref> --depth 3` shows identity, shared references and cycles; `obj referrers <ref>` answers who points to an object.
+- `stlive image export <file> --force` ships a copy of the image without the stlive server.
 - `--log file --tag name` records a call log (metadata plus a 60-character summary). `changes watch` streams new changes.
 - Edits made with `eval` (`compile:`, new instance variables, ...) are recorded too and included by `save`.
 - `image stop`/`stop --force` and `method remove --force` are destructive â€“ only when asked.

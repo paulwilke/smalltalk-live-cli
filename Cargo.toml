@@ -1,6 +1,6 @@
 [package]
 name = "stlive"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Live-debugging CLI for Smalltalk (Pharo): inspect, debug, fix and re-run in a running image"
 license = "MIT"

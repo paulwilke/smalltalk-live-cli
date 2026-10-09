@@ -396,6 +396,32 @@ StLiveCommands >> cmdLoadBaseline: args [
 ]
 
 { #category : 'runtime' }
+StLiveCommands >> cmdImageExport: args [
+	"Save a copy of this image for delivery and quit: sessions ended, the stlive server removed from the image
+	(unless keep_server), so the delivered image does not contain an open evaluation port."
+	| path name script sessionBefore |
+	path := self need: 'path' in: args.
+	(args at: 'force' ifAbsent: [ false ]) == true
+		ifFalse: [ self fail: 'confirmation_required' message: 'Export ends this instance (the image is saved under the new name, then Pharo quits); pass --force.' ].
+	name := (path endsWith: '.image') ifTrue: [ path allButLast: 6 ] ifFalse: [ path ].
+	server sessions values do: [ :s | s isSuspended ifTrue: [ server terminateSession: s ] ].
+	script := (args at: 'keep_server' ifAbsent: [ false ]) == true
+		ifTrue: [ '' ]
+		ifFalse: [ 'StLiveServer current stop. StLiveTranscriptTee uninstall. SystemAnnouncer uniqueInstance unsubscribe: StLiveServer current. StLiveServer reset.' ].
+	"Runs after this response is sent, in a process that does not depend on the package it removes."
+	[ (Delay forMilliseconds: 400) wait.
+	(script isEmpty not) ifTrue: [
+		Smalltalk compiler evaluate: script.
+		(Smalltalk compiler evaluate: '(PackageOrganizer default packageNamed: ''StLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. (PackageOrganizer default packageNamed: ''BaselineOfStLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. nil') ].
+	Smalltalk garbageCollect.
+	"saveAs: answers a SnapshotOperation, not a Boolean: tell the running session from the restored one by the session object."
+	sessionBefore := Smalltalk session.
+	Smalltalk saveAs: name.
+	Smalltalk session == sessionBefore ifTrue: [ Smalltalk quitPrimitive ] ] forkAt: Processor userInterruptPriority.
+	^ self ok: (self m: { 'exporting_to' -> (name , '.image'). 'server_removed' -> script isEmpty not })
+]
+
+{ #category : 'runtime' }
 StLiveCommands >> cmdImageSave: args [
 	| suspended |
 	suspended := server sessions values count: [ :s | s isSuspended ].

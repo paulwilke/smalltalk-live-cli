@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+- **The server upgrades itself.** `stlive start` compares a hash of the embedded Smalltalk sources with the one recorded in the image and, if they differ (an image built by an older stlive – the template *and* the per-project copies), loads the current server into the image before starting it. Previously a new binary silently kept using an old server (for instance the old Transcript failure in GUI mode) until `stlive init --force`.
+- `stlive image export <file.image> --force`: save a copy of the image **for delivery without the stlive server** (sessions ended, listener stopped, Transcript restored, `StLive` packages removed) – the delivered image has no open evaluation port; the `.changes` and `.sources` files are written next to it. This instance ends.
+- `stlive --version` now matches the release.
+
+
 ## 0.4.0 – live development with a window
 - `stlive start --gui`: Pharo starts **with** its window (Morphic/Spec now, Bloc/Toplo later) and stays connected; port file, pid, log, instance state and image copy work exactly as in headless mode.
 - `eval --ui`, `debug eval --ui`, `method compile --ui`: run in Morphic's UI process, so Spec/Morphic changes are laid out and drawn safely.

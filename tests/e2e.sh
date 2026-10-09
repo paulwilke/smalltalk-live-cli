@@ -132,4 +132,22 @@ $S stop --force >/dev/null; $S start >/dev/null
 out=$($S obj show "$OLD"); check "stale reference detected after restart" '.error.code' stale_ref
 out=$($S stop); check "stop needs --force" '.error.code' confirmation_required
 
+# --- delivery: export an image without the stlive server
+$S start >/dev/null
+$S class create Shipped --package App >/dev/null
+$S method compile Shipped --protocol t - <<< $'answer\n\t^ 42' >/dev/null
+VM=$(jq -r .vm .stlive/default.config.json)
+out=$($S image export "$WORK/dist/App.image"); check "export needs --force" '.error.code' confirmation_required
+out=$($S image export "$WORK/dist/App.image" --force); check "export writes the image" '.ok'
+cat > "$WORK/dist/check.st" <<ST
+| out |
+out := WriteStream on: String new.
+out nextPutAll: (Smalltalk globals includesKey: #StLiveServer) printString; nextPutAll: ','; nextPutAll: (Smalltalk globals at: #Shipped) new answer printString.
+'$WORK/dist/check.txt' asFileReference writeStreamDo: [ :s | s nextPutAll: out contents ].
+Smalltalk snapshot: false andQuit: true.
+ST
+(cd "$WORK/dist" && "$VM" --headless App.image st check.st >/dev/null 2>&1 &)
+for i in $(seq 1 40); do [ -s "$WORK/dist/check.txt" ] && break; sleep 0.5; done
+out="{\"v\":\"$(cat "$WORK/dist/check.txt" 2>/dev/null)\"}"; check "exported image: server gone, application kept" '.v' "false,42"
+
 echo; echo "passed: $pass, failed: $fail"; [ $fail -eq 0 ]
