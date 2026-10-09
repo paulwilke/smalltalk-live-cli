@@ -95,6 +95,22 @@ check "existing method untouched, others added" '.result.files[0].added|length' 
 grep -q "ifNil: \[ 0 \]" src/Demo/Cart.class.st && { pass=$((pass+1)); echo "ok   - tonel contains the fix"; } || { fail=$((fail+1)); echo "FAIL - tonel missing fix"; }
 out=$($S changes list); check "nothing unsaved afterwards for Demo" '.result.unsaved_by_package.Demo' null
 
+# --- diagnostics added in 0.2
+out=$($S method compile Cart - <<< $'zork\n\t^ NoSuchClassAnywhere new'); check "compile error names the undeclared variable" '.error.variable' NoSuchClassAnywhere
+check "compile error has line and column" '[.error.line,.error.column]|join(":")' '2:4'
+out=$($S eval 'String new: 300 withAll: $x' --full); check "eval --full returns whole text" '.result.text_total' 302
+out=$($S eval '3 zork' --no-session); check "eval --no-session keeps no session" '.error.session_ended'
+out=$($S eval '| a b | a := OrderedCollection new. b := OrderedCollection with: a. a add: b. a'); G=$(echo "$out" | jq -r .result.value.ref)
+out=$($S obj graph "$G" --depth 3); check "object graph finds the cycle" '.result.cycles' 1
+out=$($S obj referrers "$G"); check "referrers found" '.result.total>=1'
+out=$($S class create Bar --ivars a --class-ivars count --class-vars Registry --comment 'A bar.' --package Demo); check "class create with class side" '.result.class_instance_variables[0]' count
+out=$($S save --package Demo --dir src); check "save writes class-side definition" '.ok'
+grep -q "classInstVars" src/Demo/Bar.class.st && { pass=$((pass+1)); echo "ok   - tonel has classInstVars"; } || { fail=$((fail+1)); echo "FAIL - tonel lacks classInstVars"; }
+FRESH=$($S eval '3 zork' | jq -r .error.session)
+out=$($S debug locals "$FRESH" 0); check "frame accepted positionally" '.ok'
+STLIVE_LOG="$WORK/calls.jsonl" STLIVE_TAG=e2e $S eval '1' >/dev/null
+check_log=$(tail -1 "$WORK/calls.jsonl" | jq -r '[.tag,.command,.ok]|join(",")'); out="{\"v\":\"$check_log\"}"; check "call log written with tag" '.v' 'e2e,eval,true'
+
 # --- stale references after restart
 out=$($S eval 'Object new'); OLD=$(echo "$out" | jq -r .result.value.ref)
 $S stop --force >/dev/null; $S start >/dev/null

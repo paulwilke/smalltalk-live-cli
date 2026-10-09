@@ -37,6 +37,9 @@ stlive image info                             # version, loaded packages, unsave
 - `print` fields are truncated at 120 characters; get the full text with `obj text <ref>` or page with `obj items`.
 - Endless recursion: a timeout session; read `error.recursion.cycle` to see the repeating frames.
 - Output of `Transcript show:` and deprecation warnings arrive in `result.output`, not mixed into values.
+- `eval --no-session` for exploratory snippets so typos do not leave suspended sessions; `eval --full` for the complete text of a value.
+- `obj graph <ref> --depth 3` shows identity, shared references and cycles; `obj referrers <ref>` answers who points to an object.
+- `--log file --tag name` records a metadata-only call log.
 - `image stop`/`stop --force` and `method remove --force` are destructive – only when asked.
 
 ## Report

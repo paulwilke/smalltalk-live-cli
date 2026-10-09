@@ -109,17 +109,29 @@ fn render_method(class_header: &str, protocol: &str, source: &str, symbol_style:
     out
 }
 
+fn str_list(v: &Value, key: &str) -> Vec<String> {
+    v[key].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
+}
+
 fn render_class(c: &Value, symbol_style: bool, package: &str) -> String {
     let name = c["class_name"].as_str().unwrap_or("");
     let sup = c["superclass"].as_str().unwrap_or("Object");
-    let ivars: Vec<&str> = c["instance_variables"].as_array().map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
-    let mut s = String::from("Class {\n");
-    s.push_str(&format!("\t#name : {},\n\t#superclass : {},\n", sym(name, symbol_style), sym(sup, symbol_style)));
-    if !ivars.is_empty() {
-        s.push_str("\t#instVars : [\n");
-        s.push_str(&ivars.iter().map(|v| format!("\t\t'{}'", v)).collect::<Vec<_>>().join(",\n"));
-        s.push_str("\n\t],\n");
+    let list = |label: &str, items: Vec<String>| -> String {
+        if items.is_empty() { return String::new(); }
+        let body = items.iter().map(|v| format!("\t\t'{}'", v)).collect::<Vec<_>>().join(",\n");
+        format!("\t#{} : [\n{}\n\t],\n", label, body)
+    };
+    let mut s = String::new();
+    if let Some(comment) = c["comment"].as_str() {
+        if !comment.is_empty() {
+            s.push_str(&format!("\"\n{}\n\"\n", norm(comment).replace('"', "\"\"")));
+        }
     }
+    s.push_str("Class {\n");
+    s.push_str(&format!("\t#name : {},\n\t#superclass : {},\n", sym(name, symbol_style), sym(sup, symbol_style)));
+    s.push_str(&list("instVars", str_list(c, "instance_variables")));
+    s.push_str(&list("classVars", str_list(c, "class_variables")));
+    s.push_str(&list("classInstVars", str_list(c, "class_instance_variables")));
     if symbol_style {
         s.push_str(&format!("\t#category : {}\n}}\n", sym(package, true)));
     } else {

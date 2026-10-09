@@ -31,6 +31,12 @@ struct Cli {
     /// Pretty-print JSON
     #[arg(long, global = true)]
     pretty: bool,
+    /// Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file
+    #[arg(long, global = true, env = "STLIVE_LOG")]
+    log: Option<PathBuf>,
+    /// Free-form marker written to the call log (scene, task, ...)
+    #[arg(long, global = true, env = "STLIVE_TAG")]
+    tag: Option<String>,
     /// Human-readable indented text instead of JSON (exit codes are unchanged)
     #[arg(long, global = true)]
     text: bool,
@@ -76,6 +82,12 @@ enum Cmd {
         /// Milliseconds before the running code is interrupted into a debug session
         #[arg(long)]
         timeout: Option<u64>,
+        /// Also return the complete printString of the value as `text` (capped at 100000 chars)
+        #[arg(long)]
+        full: bool,
+        /// On failure report the error but do not keep a suspended debug session
+        #[arg(long)]
+        no_session: bool,
     },
     /// Inspect objects by reference
     #[command(subcommand)]
@@ -149,6 +161,10 @@ enum ObjCmd {
     Var { r#ref: String, name: String },
     /// Compare two objects (identity, equality, class)
     Compare { a: String, b: String },
+    /// Objects that point to this one (registry and tool frames filtered out)
+    Referrers { r#ref: String, #[arg(long)] limit: Option<u64> },
+    /// Reachable graph: nodes with identity, edges with labels, cycles (back edges) and shared nodes
+    Graph { r#ref: String, #[arg(long)] depth: Option<u64>, #[arg(long)] max_nodes: Option<u64> },
     /// Forget a reference (or --all)
     Release { r#ref: Option<String>, #[arg(long)] all: bool },
 }
@@ -172,6 +188,12 @@ enum ClassCmd {
         /// Space separated instance variable names
         #[arg(long)] ivars: Option<String>,
         #[arg(long)] package: Option<String>,
+        /// Instance variables on the class side (space separated)
+        #[arg(long)] class_ivars: Option<String>,
+        /// Class variables (space separated)
+        #[arg(long)] class_vars: Option<String>,
+        /// Class comment
+        #[arg(long)] comment: Option<String>,
     },
 }
 
@@ -233,21 +255,21 @@ enum DebugCmd {
     /// A page of frames (default 5)
     Frames { session: String, #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64> },
     /// One frame in detail (source, receiver, variables)
-    Frame { session: String, index: Option<u64>, /// Omit the method source
+    Frame { session: String, index: Option<u64>, #[arg(long)] frame: Option<u64>, /// Omit the method source
         #[arg(long)] no_source: bool },
     /// Arguments and temporaries of a frame
-    Locals { session: String, #[arg(long, default_value_t = 0)] frame: u64 },
+    Locals { session: String, frame_pos: Option<u64>, #[arg(long)] frame: Option<u64> },
     /// Receiver of a frame as an inspectable object
-    Receiver { session: String, #[arg(long, default_value_t = 0)] frame: u64 },
+    Receiver { session: String, frame_pos: Option<u64>, #[arg(long)] frame: Option<u64> },
     /// Evaluate code in a frame (temporaries visible; --frame N, default 0 = top frame)
-    Eval { session: String, code: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64> },
+    Eval { session: String, code: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64>, #[arg(long)] full: bool, #[arg(long)] no_session: bool },
     /// CONTINUE the suspended execution (does not re-run; does not prove a fix)
     Resume { session: String, /// Smalltalk expression whose value the failed send answers
         #[arg(long)] value: Option<String>, #[arg(long)] timeout: Option<u64> },
     /// Unwind to a frame and RESTART it with the current method code
-    Restart { session: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64> },
+    Restart { session: String, frame_pos: Option<u64>, #[arg(long)] frame: Option<u64>, #[arg(long)] timeout: Option<u64> },
     /// Make a frame return a value and continue
-    Return { session: String, value: String, #[arg(long, default_value_t = 0)] frame: u64, #[arg(long)] timeout: Option<u64> },
+    Return { session: String, value: String, frame_pos: Option<u64>, #[arg(long)] frame: Option<u64>, #[arg(long)] timeout: Option<u64> },
     /// RE-RUN the original operation from scratch with current code
     Rerun { session: String },
     /// Terminate a session (runs unwind blocks) or --all
@@ -418,6 +440,56 @@ fn call(inst: &Instance, cmd: &str, args: Value, read_timeout: Duration, pretty:
     match serde_json::from_slice(&buf) {
         Ok(v) => v,
         Err(e) => die(4, "bad_response", format!("Response is not valid JSON: {}", e), pretty),
+    }
+}
+
+/// UTC timestamp like 2026-10-09T13:05:07.123Z (no external crate needed).
+fn iso_now() -> String {
+    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let (secs, ms) = (d.as_secs() as i64, d.subsec_millis());
+    let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", year, month, day, rem / 3600, rem % 3600 / 60, rem % 60, ms)
+}
+
+/// One JSON line per call; metadata only (no arguments, no source code).
+fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, dur: Duration, resp: &Value, exit: i32) {
+    let r = &resp["result"];
+    let e = &resp["error"];
+    let pick = |keys: &[&str]| -> Value {
+        for k in keys {
+            for v in [&r[*k], &e[*k]] {
+                if !v.is_null() { return v.clone(); }
+            }
+        }
+        Value::Null
+    };
+    let line = json!({
+        "ts": iso_now(),
+        "tag": tag,
+        "instance": instance,
+        "command": cmd,
+        "duration_ms": dur.as_millis() as u64,
+        "output_chars": serde_json::to_string(resp).map(|s| s.chars().count()).unwrap_or(0),
+        "ok": resp["ok"] == json!(true),
+        "exit_code": exit,
+        "class": if !r["value"]["class"].is_null() { r["value"]["class"].clone() } else { pick(&["class"]) },
+        "selector": pick(&["selector"]),
+        "session": pick(&["session"]),
+        "mode": pick(&["mode"]),
+        "error_code": if resp["ok"] == json!(true) { Value::Null } else { pick(&["code", "type"]) },
+    });
+    if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{}", line);
     }
 }
 
@@ -665,10 +737,12 @@ fn main() {
         Cmd::Stop { force } => return stop(&inst, force, pretty),
         Cmd::Status => ("status".into(), json!({}), None),
         Cmd::Ping => ("ping".into(), json!({}), None),
-        Cmd::Eval { code, receiver, timeout } => {
+        Cmd::Eval { code, receiver, timeout, full, no_session } => {
             let code = if code == "-" { read_stdin() } else { code };
             let mut m = Map::new();
             m.insert("code".into(), code.into());
+            if full { m.insert("full".into(), true.into()); }
+            if no_session { m.insert("no_session".into(), true.into()); }
             opt(&mut m, "in", receiver);
             opt(&mut m, "timeout", timeout);
             ("eval".into(), Value::Object(m), timeout)
@@ -698,6 +772,19 @@ fn main() {
             }
             ObjCmd::Var { r#ref, name } => ("obj.var".into(), json!({"ref": r#ref, "name": name}), None),
             ObjCmd::Compare { a, b } => ("obj.compare".into(), json!({"a": a, "b": b}), None),
+            ObjCmd::Referrers { r#ref, limit } => {
+                let mut m = Map::new();
+                m.insert("ref".into(), r#ref.into());
+                opt(&mut m, "limit", limit);
+                ("obj.referrers".into(), Value::Object(m), None)
+            }
+            ObjCmd::Graph { r#ref, depth, max_nodes } => {
+                let mut m = Map::new();
+                m.insert("ref".into(), r#ref.into());
+                opt(&mut m, "depth", depth);
+                opt(&mut m, "max_nodes", max_nodes);
+                ("obj.graph".into(), Value::Object(m), None)
+            }
             ObjCmd::Release { r#ref, all } => {
                 let mut m = Map::new();
                 opt(&mut m, "ref", r#ref);
@@ -725,9 +812,12 @@ fn main() {
                 opt(&mut m, "limit", limit);
                 ("class.show".into(), Value::Object(m), None)
             }
-            ClassCmd::Create { name, superclass, ivars, package } => {
+            ClassCmd::Create { name, superclass, ivars, package, class_ivars, class_vars, comment } => {
                 let mut m = Map::new();
                 m.insert("name".into(), name.into());
+                opt(&mut m, "class_ivars", class_ivars);
+                opt(&mut m, "class_vars", class_vars);
+                opt(&mut m, "comment", comment);
                 opt(&mut m, "superclass", superclass);
                 opt(&mut m, "ivars", ivars);
                 opt(&mut m, "package", package);
@@ -793,15 +883,17 @@ fn main() {
                 opt(&mut m, "limit", limit);
                 ("debug.frames".into(), Value::Object(m), None)
             }
-            DebugCmd::Frame { session, index, no_source } => ("debug.frame".into(), json!({"session": session, "frame": index.unwrap_or(0), "no_source": no_source}), None),
-            DebugCmd::Locals { session, frame } => ("debug.locals".into(), json!({"session": session, "frame": frame}), None),
-            DebugCmd::Receiver { session, frame } => ("debug.receiver".into(), json!({"session": session, "frame": frame}), None),
-            DebugCmd::Eval { session, code, frame, timeout } => {
+            DebugCmd::Frame { session, index, frame, no_source } => ("debug.frame".into(), json!({"session": session, "frame": index.or(frame).unwrap_or(0), "no_source": no_source}), None),
+            DebugCmd::Locals { session, frame_pos, frame } => ("debug.locals".into(), json!({"session": session, "frame": frame_pos.or(frame).unwrap_or(0)}), None),
+            DebugCmd::Receiver { session, frame_pos, frame } => ("debug.receiver".into(), json!({"session": session, "frame": frame_pos.or(frame).unwrap_or(0)}), None),
+            DebugCmd::Eval { session, code, frame, timeout, full, no_session } => {
                 let code = if code == "-" { read_stdin() } else { code };
                 let mut m = Map::new();
                 m.insert("session".into(), session.into());
                 m.insert("code".into(), code.into());
                 m.insert("frame".into(), frame.into());
+                if full { m.insert("full".into(), true.into()); }
+                if no_session { m.insert("no_session".into(), true.into()); }
                 opt(&mut m, "timeout", timeout);
                 ("debug.eval".into(), Value::Object(m), timeout)
             }
@@ -812,18 +904,18 @@ fn main() {
                 opt(&mut m, "timeout", timeout);
                 ("debug.resume".into(), Value::Object(m), timeout)
             }
-            DebugCmd::Restart { session, frame, timeout } => {
+            DebugCmd::Restart { session, frame_pos, frame, timeout } => {
                 let mut m = Map::new();
                 m.insert("session".into(), session.into());
-                m.insert("frame".into(), frame.into());
+                m.insert("frame".into(), frame_pos.or(frame).unwrap_or(0).into());
                 opt(&mut m, "timeout", timeout);
                 ("debug.restart".into(), Value::Object(m), timeout)
             }
-            DebugCmd::Return { session, value, frame, timeout } => {
+            DebugCmd::Return { session, value, frame_pos, frame, timeout } => {
                 let mut m = Map::new();
                 m.insert("session".into(), session.into());
                 m.insert("value".into(), value.into());
-                m.insert("frame".into(), frame.into());
+                m.insert("frame".into(), frame_pos.or(frame).unwrap_or(0).into());
                 opt(&mut m, "timeout", timeout);
                 ("debug.return".into(), Value::Object(m), timeout)
             }
@@ -853,10 +945,15 @@ fn main() {
     // The image enforces the evaluation timeout (default 30 s) and answers with a debug session;
     // the socket timeout only guards against a wedged image.
     let read_timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000) + 15_000);
+    let started = Instant::now();
     let mut resp = call(&inst, &cmd, args, read_timeout, pretty);
     if cmd == "changes.show" {
         add_diff(&mut resp);
     }
     emit(&resp, pretty);
-    std::process::exit(exit_code_for(&resp));
+    let code = exit_code_for(&resp);
+    if let Some(path) = &cli.log {
+        write_log(path, cli.tag.as_deref(), &inst.name, &cmd, started.elapsed(), &resp, code);
+    }
+    std::process::exit(code);
 }

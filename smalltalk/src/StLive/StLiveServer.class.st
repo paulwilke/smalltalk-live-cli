@@ -133,6 +133,28 @@ StLiveServer >> dropOldestObjects: n [
 ]
 
 { #category : 'references' }
+StLiveServer >> objectsRegistry [
+	^ objects
+]
+
+{ #category : 'references' }
+StLiveServer >> reverseRegistry [
+	^ reverse
+]
+
+{ #category : 'references' }
+StLiveServer >> isRegistryInternal: anObject [
+	"True for the internal arrays/associations of the registry dictionaries."
+	^ [ | inner |
+		inner := objects instVarNamed: 'dictionary'.
+		anObject == inner
+			or: [ anObject == (inner instVarNamed: 'array')
+			or: [ anObject == (reverse instVarNamed: 'array')
+			or: [ (anObject isKindOf: Association) and: [ ((reverse instVarNamed: 'array') identityIncludes: anObject) or: [ anObject key isString and: [ objects includesKey: anObject key ] ] ] ] ] ] ]
+		on: Error do: [ :e | false ]
+]
+
+{ #category : 'references' }
 StLiveServer >> clearObjects [
 	| n |
 	n := objects size.

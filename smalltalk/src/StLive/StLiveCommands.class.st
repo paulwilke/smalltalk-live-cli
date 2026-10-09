@@ -87,6 +87,64 @@ StLiveCommands >> allBehaviorsDo: aBlock [
 ]
 
 { #category : 'helpers' }
+StLiveCommands >> positionDetails: position in: source [
+	"{ position, line, column } (1-based) for a character position in source."
+	| pos before lines |
+	pos := ((position ifNil: [ 1 ]) max: 1) min: source size + 1.
+	before := source copyFrom: 1 to: pos - 1.
+	lines := before occurrencesOf: Character lf.
+	^ self m: {
+		'position' -> pos.
+		'line' -> (lines + 1).
+		'column' -> (pos - (before lastIndexOf: Character lf) ) }
+]
+
+{ #category : 'helpers' }
+StLiveCommands >> compileFailure: e source: source [
+	"A failure with a real message, variable name, line and column for a Opal compile problem."
+	| text pos details |
+	text := [ e messageText ] on: Error do: [ :x | nil ].
+	(e isKindOf: OCUndeclaredVariableWarning)
+		ifTrue: [
+			pos := [ e node start ] on: Error do: [ :x | 1 ].
+			(text isNil or: [ text isEmpty ]) ifTrue: [ text := 'Undeclared variable: ' , ([ e node name ] on: Error do: [ :x | '?' ]) ].
+			details := self positionDetails: pos in: source.
+			details at: 'variable' put: ([ e node name asString ] on: Error do: [ :x | nil ]).
+			details at: 'hint' put: 'The variable is not defined in the image (class not loaded? typo?).' ]
+		ifFalse: [
+			pos := [ e location ] on: Error do: [ :x | 1 ].
+			(text isNil or: [ text isEmpty ]) ifTrue: [ text := e description ].
+			details := self positionDetails: pos in: source ].
+	^ StLiveFailure code: ((e isKindOf: OCUndeclaredVariableWarning) ifTrue: [ 'compile_error' ] ifFalse: [ 'syntax_error' ]) message: text asString details: details
+]
+
+{ #category : 'helpers' }
+StLiveCommands >> finishEval: response args: args [
+	"Honour no_session: report the failure but do not keep the suspended execution."
+	((args at: 'no_session' ifAbsent: [ false ]) == true and: [ (response at: 'ok') not ]) ifTrue: [
+		| err id |
+		err := response at: 'error'.
+		id := err at: 'session' ifAbsent: [ nil ].
+		id ifNotNil: [
+			server terminateSession: (server sessionFor: id).
+			err at: 'session' put: nil.
+			err at: 'session_ended' put: true ] ].
+	^ response
+]
+
+{ #category : 'helpers' }
+StLiveCommands >> addFullText: result value: value args: args [
+	"eval --full: the complete printString (capped) next to the compact summary."
+	| text cap |
+	(args at: 'full' ifAbsent: [ false ]) == true ifFalse: [ ^ self ].
+	cap := 100000.
+	text := [ value printString ] on: Error do: [ :e | '<printString failed>' ].
+	result at: 'text' put: (text size > cap ifTrue: [ text first: cap ] ifFalse: [ text ]).
+	result at: 'text_total' put: text size.
+	text size > cap ifTrue: [ result at: 'text_truncated' put: true ]
+]
+
+{ #category : 'helpers' }
 StLiveCommands >> originCmd: cmd args: args [
 	^ self m: { 'cmd' -> cmd. 'args' -> args }
 ]
@@ -98,13 +156,7 @@ StLiveCommands >> compileDoit: code receiver: receiver context: context [
 		context ifNotNil: [ compiler context: context ].
 		compiler compile ]
 		on: OCCodeError
-		do: [ :e |
-			(StLiveFailure
-				code: 'syntax_error'
-				message: e messageText asString
-				details: (self m: {
-					'position' -> e location.
-					'line' -> ((code copyFrom: 1 to: (e location min: code size)) lines size max: 1) })) signal ]
+		do: [ :e | (self compileFailure: e source: code) signal ]
 ]
 
 { #category : 'jobs' }
@@ -233,6 +285,20 @@ StLiveCommands >> cmdPing: args [
 ]
 
 { #category : 'runtime' }
+StLiveCommands >> changesByPackage [
+	"Since the image run started: { package: { total, unsaved } }."
+	| d |
+	d := OrderedDictionary new.
+	server changes do: [ :c |
+		| pkg e |
+		pkg := (c at: 'package' ifAbsent: [ nil ]) ifNil: [ '?' ].
+		e := d at: pkg ifAbsentPut: [ self m: { 'total' -> 0. 'unsaved' -> 0 } ].
+		e at: 'total' put: (e at: 'total') + 1.
+		(c at: 'saved' ifAbsent: [ true ]) ifFalse: [ e at: 'unsaved' put: (e at: 'unsaved') + 1 ] ].
+	^ d
+]
+
+{ #category : 'runtime' }
 StLiveCommands >> cmdImageInfo: args [
 	| packages |
 	packages := (PackageOrganizer default packages reject: [ :p | server isSystemPackage: p name ]) asSortedCollection: [ :a :b | a name <= b name ].
@@ -244,13 +310,24 @@ StLiveCommands >> cmdImageInfo: args [
 		'vm' -> (Smalltalk vm getSystemAttribute: 0).
 		'loaded_packages' -> (packages asArray collect: [ :p | self m: { 'name' -> p name. 'classes' -> p definedClasses size } ]).
 		'unsaved_changes' -> (server changes count: [ :c | (c at: 'saved' ifAbsent: [ true ]) not ]).
+		'changes_by_package' -> self changesByPackage.
 		'sessions_suspended' -> (server sessions values count: [ :x | x isSuspended ]) })
+]
+
+{ #category : 'runtime' }
+StLiveCommands >> classCountsOf: packageNames [
+	| d |
+	d := OrderedDictionary new.
+	(packageNames first: (40 min: packageNames size)) do: [ :n |
+		d at: n put: ((PackageOrganizer default packageNamed: n ifAbsent: [ nil ]) ifNil: [ 0 ] ifNotNil: [ :pk | pk definedClasses size ]) ].
+	^ d
 ]
 
 { #category : 'runtime' }
 StLiveCommands >> cmdLoadBaseline: args [
 	"Load a Metacello baseline (in a job: failures become debug sessions) and report what changed."
-	| name repository groups before timeout holder response |
+	| name repository groups before timeout holder response warnings |
+	warnings := Bag new.
 	name := self need: 'name' in: args.
 	repository := self need: 'repository' in: args.
 	groups := (args at: 'groups' ifAbsent: [ #() ]) asArray.
@@ -260,12 +337,17 @@ StLiveCommands >> cmdLoadBaseline: args [
 		runBlock: [
 			| loader added |
 			loader := Metacello new baseline: name; repository: repository; yourself.
-			groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ].
+			[ groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ] ]
+				on: Warning
+				do: [ :w | warnings add: ([ w messageText asString ] on: Error do: [ :x | w class name ]). w resume ].
 			added := ((PackageOrganizer default packages collect: [ :p | p name ]) asSet difference: before) asSortedCollection asArray.
 			holder := self m: {
 				'new_package_count' -> added size.
 				'new_packages' -> (added first: (15 min: added size)).
-				'new_packages_truncated' -> (added size > 15) }.
+				'new_packages_truncated' -> (added size > 15).
+				'classes_per_package' -> (self classCountsOf: added).
+				'empty_packages' -> (added select: [ :n | (PackageOrganizer default packageNamed: n ifAbsent: [ nil ]) ifNil: [ false ] ifNotNil: [ :pk | pk definedClasses isEmpty and: [ pk extensionMethods isEmpty ] ] ]).
+				'warnings' -> (warnings asSet asArray collect: [ :w | self m: { 'message' -> w. 'count' -> (warnings occurrencesOf: w) } ]) }.
 			true ]
 		origin: (self originCmd: 'load.baseline' args: args)
 		timeout: timeout
@@ -295,16 +377,18 @@ StLiveCommands >> cmdImageStop: args [
 
 { #category : 'eval' }
 StLiveCommands >> cmdEval: args [
-	| code receiver method timeout |
+	| code receiver method timeout holder response |
 	code := self need: 'code' in: args.
 	receiver := (args at: 'in' ifAbsent: [ nil ]) ifNil: [ nil ] ifNotNil: [ :r | server objectFor: r ].
 	timeout := self int: 'timeout' in: args default: 30000.
 	method := self compileDoit: code receiver: receiver context: nil.
-	^ self
-		runBlock: [ method valueWithReceiver: receiver arguments: #() ]
+	response := self
+		runBlock: [ holder := method valueWithReceiver: receiver arguments: #() ]
 		origin: (self originCmd: 'eval' args: args)
 		timeout: timeout
-		mode: 'first'
+		mode: 'first'.
+	(response at: 'ok') ifTrue: [ self addFullText: (response at: 'result') value: holder args: args ].
+	^ self finishEval: response args: args
 ]
 
 { #category : 'objects' }
@@ -365,6 +449,129 @@ StLiveCommands >> cmdObjCompare: args [
 		'same_class' -> (a class == b class).
 		'a' -> (self summary: a).
 		'b' -> (self summary: b) })
+]
+
+{ #category : 'objects' }
+StLiveCommands >> isToolingObject: anObject [
+	"Objects that only exist because of this tool (registry, contexts of our frames)."
+	^ (anObject class name beginsWith: 'StLive')
+		or: [ (anObject isBlock and: [ anObject receiver class name beginsWith: 'StLive' ])
+		or: [ anObject == server objectsRegistry or: [ anObject == server reverseRegistry
+		or: [ anObject isContext ] ] ] ]
+]
+
+{ #category : 'objects' }
+StLiveCommands >> meaningfulReferrersOf: obj [
+	^ self meaningfulReferrersOf: obj except: #()
+]
+
+{ #category : 'objects' }
+StLiveCommands >> meaningfulReferrersOf: obj except: excluded [
+	^ ((obj pointersToExcept: excluded) reject: [ :r | (self isToolingObject: r) or: [ server isRegistryInternal: r ] ]) asArray
+]
+
+{ #category : 'objects' }
+StLiveCommands >> cmdObjReferrers: args [
+	"Who points to this object? Registry and our own stack frames are filtered out; internal storage arrays
+	of collections are resolved to the collection that owns them."
+	| obj limit found |
+	obj := server objectFor: (self need: 'ref' in: args).
+	limit := self int: 'limit' in: args default: 20.
+	found := OrderedCollection new.
+	self meaningfulReferrersOf: obj do: [ :r :owner |
+		(found anySatisfy: [ :x | x first == owner ]) ifFalse: [ found add: { owner. r } ] ].
+	^ self ok: (self m: {
+		'total' -> found size.
+		'truncated' -> (found size > limit).
+		'referrers' -> ((found asArray first: (limit min: found size)) collect: [ :pair |
+			| owner r d names via |
+			owner := pair first.
+			r := pair last.
+			d := self summary: owner.
+			names := owner class allInstVarNames.
+			via := ((1 to: names size) select: [ :i | (owner instVarAt: i) == obj ]) collect: [ :i | names at: i ].
+			(owner == r and: [ via isEmpty ]) ifTrue: [ via := owner isCollection ifTrue: [ #('(element)') ] ifFalse: [ #() ] ].
+			owner ~~ r ifTrue: [ via := #('(element)') ].
+			d at: 'via' put: via asArray.
+			d ]) })
+]
+
+{ #category : 'objects' }
+StLiveCommands >> meaningfulReferrersOf: obj do: aBlock [
+	"Evaluate aBlock with referrer and its owning object (collection storage resolved)."
+	| outer |
+	outer := self meaningfulReferrersOf: obj.
+	outer do: [ :r |
+		| owner |
+		owner := r.
+		((r class == Array or: [ r class == WeakArray ]) or: [ r isKindOf: Association ]) ifTrue: [
+			owner := ((self meaningfulReferrersOf: r except: { outer }) detect: [ :o | o isCollection or: [ o isKindOf: Object ] ] ifNone: [ r ]) ].
+		aBlock value: r value: owner ]
+]
+
+{ #category : 'objects' }
+StLiveCommands >> graphChildrenOf: obj [
+	"Answer an array of { label. child } for the references an object holds."
+	| names list |
+	list := OrderedCollection new.
+	obj isCollection & (server describer isSystemClass: obj class)
+		ifTrue: [
+			obj isDictionary
+				ifTrue: [ obj associations first: (20 min: obj size) do: [ :a | list add: { '[' , (server describer print: a key limit: 30) , ']'. a value } ] ]
+				ifFalse: [ | arr | arr := obj isSequenceable ifTrue: [ obj ] ifFalse: [ obj asArray ].
+					1 to: (20 min: arr size) do: [ :i | list add: { '[' , i printString , ']'. arr at: i } ] ] ]
+		ifFalse: [
+			names := obj class allInstVarNames.
+			names withIndexDo: [ :n :i | list add: { n. obj instVarAt: i } ] ].
+	^ list asArray
+]
+
+{ #category : 'objects' }
+StLiveCommands >> cmdObjGraph: args [
+	"Reachable object graph from a root: nodes with identity, edges with labels, back edges (cycles) and shared nodes marked."
+	| root depth maxNodes ids nodes edges path visit |
+	root := server objectFor: (self need: 'ref' in: args).
+	depth := self int: 'depth' in: args default: 2.
+	maxNodes := self int: 'max_nodes' in: args default: 100.
+	ids := IdentityDictionary new.
+	nodes := OrderedCollection new.
+	edges := OrderedCollection new.
+	path := IdentitySet new.
+	visit := nil.
+	visit := [ :obj :level |
+		| id node |
+		id := ids at: obj ifAbsent: [ nil ].
+		id isNil ifTrue: [
+			id := 'n' , (ids size + 1) printString.
+			ids at: obj put: id.
+			node := (self summary: obj).
+			node at: 'id' put: id; at: 'identity' put: obj identityHash; at: 'in_degree' put: 0.
+			nodes add: node.
+			level < depth ifTrue: [
+				path add: obj.
+				(self graphChildrenOf: obj) do: [ :pair |
+					| child |
+					child := pair last.
+					(server describer isInline: child) ifFalse: [
+						nodes size < maxNodes ifTrue: [
+							| childId back |
+							back := path includes: child.
+							childId := visit value: child value: level + 1.
+							childId ifNotNil: [
+								edges add: (self m: { 'from' -> id. 'label' -> pair first. 'to' -> childId. 'back_edge' -> back }) ] ] ] ].
+				path remove: obj ] ].
+		id ].
+	visit value: root value: 0.
+	edges do: [ :e | | n | n := nodes detect: [ :x | (x at: 'id') = (e at: 'to') ]. n at: 'in_degree' put: (n at: 'in_degree') + 1 ].
+	^ self ok: (self m: {
+		'root' -> 'n1'.
+		'depth' -> depth.
+		'node_count' -> nodes size.
+		'truncated' -> (nodes size >= maxNodes).
+		'cycles' -> (edges count: [ :e | e at: 'back_edge' ]).
+		'shared_nodes' -> ((nodes select: [ :n | (n at: 'in_degree') > 1 ]) collect: [ :n | n at: 'id' ]).
+		'nodes' -> nodes asArray.
+		'edges' -> edges asArray })
 ]
 
 { #category : 'objects' }
@@ -481,15 +688,22 @@ StLiveCommands >> cmdMethodShow: args [
 
 { #category : 'code' }
 StLiveCommands >> cmdClassCreate: args [
-	| name sup ivars package builder cls |
+	| name sup ivars package cls classIvars classVars comment words |
 	name := self need: 'name' in: args.
 	sup := self classNamed: (args at: 'superclass' ifAbsent: [ 'Object' ]).
-	ivars := ((args at: 'ivars' ifAbsent: [ '' ]) substrings: ' ,') collect: [ :s | s asSymbol ].
+	words := [ :key | ((args at: key ifAbsent: [ '' ]) substrings: ' ,') collect: [ :w | w asSymbol ] ].
+	ivars := words value: 'ivars'.
+	classIvars := words value: 'class_ivars'.
+	classVars := words value: 'class_vars'.
+	comment := args at: 'comment' ifAbsent: [ nil ].
 	package := args at: 'package' ifAbsent: [ 'Live-Scratch' ].
 	cls := (sup << name asSymbol)
 		slots: ivars;
+		sharedVariables: classVars;
 		package: package;
 		install.
+	cls class instanceVariableNames: (classIvars inject: '' into: [ :a :w | a , w , ' ' ]) trimBoth.
+	comment ifNotNil: [ cls comment: comment ].
 	server changes add: (self m: {
 		'time' -> DateAndTime now printString.
 		'kind' -> 'class-create'.
@@ -499,8 +713,16 @@ StLiveCommands >> cmdClassCreate: args [
 		'package' -> package.
 		'class_package' -> package.
 		'superclass' -> sup name.
-		'instance_variables' -> cls instVarNames asArray }).
-	^ self ok: (self m: { 'class' -> cls name. 'package' -> package. 'instance_variables' -> cls instVarNames asArray })
+		'instance_variables' -> cls instVarNames asArray.
+		'class_instance_variables' -> cls class instVarNames asArray.
+		'class_variables' -> cls classVarNames asArray.
+		'comment' -> comment }).
+	^ self ok: (self m: {
+		'class' -> cls name.
+		'package' -> package.
+		'instance_variables' -> cls instVarNames asArray.
+		'class_instance_variables' -> cls class instVarNames asArray.
+		'class_variables' -> cls classVarNames asArray })
 ]
 
 { #category : 'code' }
@@ -522,13 +744,12 @@ StLiveCommands >> cmdMethodCompile: args [
 	cls := self classNamed: (self need: 'class' in: args).
 	source := self lf: (self need: 'source' in: args) trimRight.
 	selector := [ (OpalCompiler new source: source; class: cls; parse) selector ]
-		on: OCCodeError do: [ :e | ^ (StLiveFailure code: 'syntax_error' message: e messageText asString details: (self m: { 'position' -> e location })) signal ].
+		on: OCCodeError do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	old := cls compiledMethodAt: selector ifAbsent: [ nil ].
 	protocol := args at: 'protocol' ifAbsent: [ old ifNil: [ 'as yet unclassified' ] ifNotNil: [ :o | o protocol name ] ].
 	new := [ cls compile: source classified: protocol ]
 		on: OCCodeError, OCUndeclaredVariableWarning
-		do: [ :e |
-			^ (StLiveFailure code: 'compile_error' message: e messageText asString details: (self m: { 'position' -> ([ e location ] on: Error do: [ :x | nil ]) })) signal ].
+		do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	new isNil ifTrue: [ self fail: 'compile_error' message: 'Compilation failed' ].
 	entry := self m: {
 		'time' -> DateAndTime now printString.
@@ -876,7 +1097,7 @@ StLiveCommands >> cmdDebugReceiver: args [
 { #category : 'debug' }
 StLiveCommands >> cmdDebugEval: args [
 	"Evaluate an expression in the context of a frame (temporaries and arguments are visible)."
-	| s ctx code compiler |
+	| s ctx code compiler holder response |
 	s := self session: args.
 	self requireSuspended: s.
 	ctx := self frameContext: s args: args.
@@ -886,11 +1107,13 @@ StLiveCommands >> cmdDebugEval: args [
 			f messageText: f messageText , ' (evaluated in frame ' , (self int: 'frame' in: args default: 0) printString , ' of ' , s id , '; pick the frame that declares the variable with --frame N)'.
 			f pass ].
 	compiler := OpalCompiler new source: code; receiver: ctx receiver; context: ctx; yourself.
-	^ self
-		runBlock: [ compiler evaluate ]
+	response := self
+		runBlock: [ holder := compiler evaluate ]
 		origin: (self originCmd: 'debug.eval' args: args)
 		timeout: (self int: 'timeout' in: args default: 30000)
-		mode: 'first'
+		mode: 'first'.
+	(response at: 'ok') ifTrue: [ self addFullText: (response at: 'result') value: holder args: args ].
+	^ self finishEval: response args: args
 ]
 
 { #category : 'debug' }

@@ -33,6 +33,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
   -V, --version                Print version
@@ -50,6 +52,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -67,6 +71,8 @@ Options:
       --image <IMAGE>          Image prepared with the StLive package (remembered per instance) [env: STLIVE_IMAGE=]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -83,6 +89,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -98,6 +106,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -113,6 +123,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -128,6 +140,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -147,7 +161,11 @@ Options:
       --in <RECEIVER>          Object reference used as `self`
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --timeout <TIMEOUT>      Milliseconds before the running code is interrupted into a debug session
+      --full                   Also return the complete printString of the value as `text` (capped at 100000 chars)
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --no-session             On failure report the error but do not keep a suspended debug session
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -160,18 +178,22 @@ Inspect objects by reference
 Usage: stlive obj [OPTIONS] <COMMAND>
 
 Commands:
-  show     Summary with instance variables (paginated)
-  items    Elements of a collection (paginated)
-  text     Full text of a string (or printString of any object), paginated by characters
-  var      One instance variable
-  compare  Compare two objects (identity, equality, class)
-  release  Forget a reference (or --all)
-  help     Print this message or the help of the given subcommand(s)
+  show       Summary with instance variables (paginated)
+  items      Elements of a collection (paginated)
+  text       Full text of a string (or printString of any object), paginated by characters
+  var        One instance variable
+  compare    Compare two objects (identity, equality, class)
+  referrers  Objects that point to this one (registry and tool frames filtered out)
+  graph      Reachable graph: nodes with identity, edges with labels, cycles (back edges) and shared nodes
+  release    Forget a reference (or --all)
+  help       Print this message or the help of the given subcommand(s)
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -193,6 +215,8 @@ Options:
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
       --raw                    Also show internals of system collections
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -213,6 +237,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -233,6 +259,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -252,6 +280,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -271,6 +301,51 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive obj referrers`
+
+```
+Objects that point to this one (registry and tool frames filtered out)
+
+Usage: stlive obj referrers [OPTIONS] <REF>
+
+Arguments:
+  <REF>  
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --limit <LIMIT>          
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive obj graph`
+
+```
+Reachable graph: nodes with identity, edges with labels, cycles (back edges) and shared nodes
+
+Usage: stlive obj graph [OPTIONS] <REF>
+
+Arguments:
+  <REF>  
+
+Options:
+      --depth <DEPTH>          
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --max-nodes <MAX_NODES>  
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -290,6 +365,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -312,6 +389,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -329,6 +408,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -346,6 +427,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -363,6 +446,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -380,6 +465,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -400,6 +487,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -420,6 +509,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -435,14 +526,19 @@ Arguments:
   <NAME>  
 
 Options:
-  -i, --instance <INSTANCE>      Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
-      --superclass <SUPERCLASS>  
-      --ivars <IVARS>            Space separated instance variable names
-      --state-dir <STATE_DIR>    Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
-      --package <PACKAGE>        
-      --pretty                   Pretty-print JSON
-      --text                     Human-readable indented text instead of JSON (exit codes are unchanged)
-  -h, --help                     Print help
+  -i, --instance <INSTANCE>        Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --superclass <SUPERCLASS>    
+      --ivars <IVARS>              Space separated instance variable names
+      --state-dir <STATE_DIR>      Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --package <PACKAGE>          
+      --pretty                     Pretty-print JSON
+      --class-ivars <CLASS_IVARS>  Instance variables on the class side (space separated)
+      --log <LOG>                  Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --class-vars <CLASS_VARS>    Class variables (space separated)
+      --tag <TAG>                  Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --comment <COMMENT>          Class comment
+      --text                       Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                       Print help
 ```
 
 ## `stlive method`
@@ -462,6 +558,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -480,6 +578,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -502,6 +602,8 @@ Options:
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
       --protocol <PROTOCOL>    
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -522,6 +624,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -542,6 +646,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -557,6 +663,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -573,6 +681,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -593,6 +703,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -612,6 +724,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -633,6 +747,8 @@ Options:
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --discard-sessions       End all sessions of this run, including the representative one per group
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -652,6 +768,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -671,6 +789,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -701,6 +821,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -717,6 +839,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -735,6 +859,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -755,6 +881,8 @@ Options:
       --limit <LIMIT>          
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -771,10 +899,13 @@ Arguments:
   [INDEX]    
 
 Options:
+      --frame <FRAME>          
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --no-source              Omit the method source
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -784,16 +915,19 @@ Options:
 ```
 Arguments and temporaries of a frame
 
-Usage: stlive debug locals [OPTIONS] <SESSION>
+Usage: stlive debug locals [OPTIONS] <SESSION> [FRAME_POS]
 
 Arguments:
-  <SESSION>  
+  <SESSION>    
+  [FRAME_POS]  
 
 Options:
-      --frame <FRAME>          [default: 0]
+      --frame <FRAME>          
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -803,16 +937,19 @@ Options:
 ```
 Receiver of a frame as an inspectable object
 
-Usage: stlive debug receiver [OPTIONS] <SESSION>
+Usage: stlive debug receiver [OPTIONS] <SESSION> [FRAME_POS]
 
 Arguments:
-  <SESSION>  
+  <SESSION>    
+  [FRAME_POS]  
 
 Options:
-      --frame <FRAME>          [default: 0]
+      --frame <FRAME>          
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -833,7 +970,11 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --timeout <TIMEOUT>      
+      --full                   
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --no-session             
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -854,6 +995,8 @@ Options:
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --timeout <TIMEOUT>      
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -863,17 +1006,20 @@ Options:
 ```
 Unwind to a frame and RESTART it with the current method code
 
-Usage: stlive debug restart [OPTIONS] <SESSION>
+Usage: stlive debug restart [OPTIONS] <SESSION> [FRAME_POS]
 
 Arguments:
-  <SESSION>  
+  <SESSION>    
+  [FRAME_POS]  
 
 Options:
-      --frame <FRAME>          [default: 0]
+      --frame <FRAME>          
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --timeout <TIMEOUT>      
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -883,18 +1029,21 @@ Options:
 ```
 Make a frame return a value and continue
 
-Usage: stlive debug return [OPTIONS] <SESSION> <VALUE>
+Usage: stlive debug return [OPTIONS] <SESSION> <VALUE> [FRAME_POS]
 
 Arguments:
-  <SESSION>  
-  <VALUE>    
+  <SESSION>    
+  <VALUE>      
+  [FRAME_POS]  
 
 Options:
-      --frame <FRAME>          [default: 0]
+      --frame <FRAME>          
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --timeout <TIMEOUT>      
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -913,6 +1062,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -932,6 +1083,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -953,6 +1106,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -968,6 +1123,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -983,6 +1140,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -1002,6 +1161,8 @@ Options:
       --start                  Start it right away
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -1021,6 +1182,8 @@ Options:
       --dir <DIR>              Source directory containing one folder per package (e.g. the repo's src/)
       --pretty                 Pretty-print JSON
       --dry-run                Show what would be written
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
@@ -1042,6 +1205,8 @@ Options:
       --state-dir <STATE_DIR>    Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                   Pretty-print JSON
       --timeout <TIMEOUT>        
+      --log <LOG>                Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>                Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                     Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                     Print help
 ```
@@ -1061,6 +1226,8 @@ Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```
