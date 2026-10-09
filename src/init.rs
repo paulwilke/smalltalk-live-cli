@@ -11,6 +11,9 @@ Metacello new
 	repository: 'tonel://' , src fullName;
 	load.
 (Smalltalk globals at: #StLiveServer) recordSystemPackages.
+(src parent / 'system-packages.txt') ensureDelete.
+(src parent / 'system-packages.txt') writeStreamDo: [ :out |
+	PackageOrganizer default packages do: [ :pk | out nextPutAll: pk name; lf ] ].
 Smalltalk snapshot: true andQuit: true.
 "#;
 
@@ -48,26 +51,54 @@ fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("{} failed ({})", what, status)) }
 }
 
-pub fn init(home: &Path, force: bool) -> Result<Value, String> {
-    let pharo_dir = home.join("pharo");
-    std::fs::create_dir_all(&pharo_dir).map_err(|e| e.to_string())?;
-
-    // 1. Pharo 13 VM + base image from get.pharo.org
-    if force || !pharo_dir.join("Pharo.image").exists() || find_vm(&pharo_dir).is_none() {
-        eprintln!("stlive: downloading Pharo 13 (VM + image, ~100 MB) from get.pharo.org ...");
-        let script = pharo_dir.join("get-pharo.sh");
-        run(Command::new("curl").args(["-fsSL", "-o"]).arg(&script).arg("https://get.pharo.org/64/130+vm"), "download of get.pharo.org script (is curl installed?)")?;
-        run(Command::new("bash").arg(&script).current_dir(&pharo_dir), "Pharo download (needs curl and unzip)")?;
-    }
-    let vm = find_vm(&pharo_dir).ok_or("Pharo VM not found after download")?;
-
-    // 2. Sources
+/// Write the embedded Smalltalk sources below `<home>/src` (used by init and attach).
+pub fn write_sources(home: &Path) -> Result<PathBuf, String> {
     let src = home.join("src");
     for (rel, content) in SOURCES {
         let path = src.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::write(&path, content).map_err(|e| e.to_string())?;
     }
+    Ok(src)
+}
+
+/// Names of the packages of a pristine image (written by `init`), for `attach`.
+pub fn system_packages(home: &Path) -> Option<Vec<String>> {
+    let t = std::fs::read_to_string(home.join("system-packages.txt")).ok()?;
+    Some(t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+}
+
+pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Result<Value, String> {
+    let pharo_dir = home.join("pharo");
+    std::fs::create_dir_all(&pharo_dir).map_err(|e| e.to_string())?;
+
+    // 1. Pharo 13 VM + base image: a local Pharo (--vm/--image) or get.pharo.org
+    if let Some((lvm, limg)) = &local {
+        std::fs::copy(limg, pharo_dir.join("Pharo.image")).map_err(|e| format!("{}: {}", limg.display(), e))?;
+        let _ = std::fs::copy(limg.with_extension("changes"), pharo_dir.join("Pharo.changes"));
+        // the sources file must sit next to the image
+        if let Ok(rd) = std::fs::read_dir(limg.parent().unwrap()) {
+            for e in rd.flatten() {
+                if e.path().extension().map(|x| x == "sources").unwrap_or(false) {
+                    let link = pharo_dir.join(e.file_name());
+                    if !link.exists() { let _ = std::os::unix::fs::symlink(e.path(), link); }
+                }
+            }
+        }
+        let _ = lvm;
+    } else if force || !pharo_dir.join("Pharo.image").exists() || find_vm(&pharo_dir).is_none() {
+        eprintln!("stlive: downloading Pharo 13 (VM + image, ~100 MB) from get.pharo.org ...");
+        let script = pharo_dir.join("get-pharo.sh");
+        run(Command::new("curl").args(["-fsSL", "-o"]).arg(&script).arg("https://get.pharo.org/64/130+vm"), "download of get.pharo.org script (is curl installed?)")?;
+        run(Command::new("bash").arg(&script).current_dir(&pharo_dir), "Pharo download (needs curl and unzip)")?;
+    }
+    let vm = match &local {
+        Some((lvm, _)) => std::fs::canonicalize(lvm).map_err(|e| format!("{}: {}", lvm.display(), e))?,
+        None => find_vm(&pharo_dir).ok_or("Pharo VM not found after download")?,
+    };
+
+    // 2. Sources
+    let src = write_sources(home)?;
     std::fs::write(home.join("prepare.st"), PREPARE_ST).map_err(|e| e.to_string())?;
 
     // 3. Image = base image + StLive package

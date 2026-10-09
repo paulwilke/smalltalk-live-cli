@@ -82,6 +82,25 @@ StLiveCommands >> lf: aString [
 ]
 
 { #category : 'helpers' }
+StLiveCommands >> canonicalSourceOf: aMethod [
+	"LF source whose first line is exactly the message pattern; a body written on the pattern's line moves below it."
+	| src sel args pattern rest |
+	src := self lf: aMethod sourceCode.
+	sel := aMethod selector.
+	args := aMethod argumentNames.
+	pattern := sel numArgs = 0
+		ifTrue: [ sel asString ]
+		ifFalse: [
+			sel isKeyword
+				ifTrue: [ (sel keywords withIndexCollect: [ :k :i | k , ' ' , (args at: i) ]) inject: '' into: [ :a :b | a isEmpty ifTrue: [ b ] ifFalse: [ a , ' ' , b ] ] ]
+				ifFalse: [ sel , ' ' , args first ] ].
+	(src beginsWith: pattern) ifFalse: [ ^ src ].
+	rest := src allButFirst: pattern size.
+	(rest isEmpty or: [ rest first = Character lf ]) ifTrue: [ ^ src ].
+	^ pattern , String lf , String tab , rest trimBoth
+]
+
+{ #category : 'helpers' }
 StLiveCommands >> allBehaviorsDo: aBlock [
 	Smalltalk globals allClassesAndTraits do: [ :c | aBlock value: c. aBlock value: c class ]
 ]
@@ -129,6 +148,10 @@ StLiveCommands >> finishEval: response args: args [
 			server terminateSession: (server sessionFor: id).
 			err at: 'session' put: nil.
 			err at: 'session_ended' put: true ] ].
+	((args at: 'no_source' ifAbsent: [ false ]) == true and: [ (response at: 'ok') not ]) ifTrue: [
+		| err |
+		err := response at: 'error'.
+		(err at: 'top' ifAbsent: [ nil ]) ifNotNil: [ :t | t removeKey: 'statement' ifAbsent: [ nil ] ] ].
 	^ response
 ]
 
@@ -337,7 +360,7 @@ StLiveCommands >> cmdLoadBaseline: args [
 		runBlock: [
 			| loader added |
 			loader := Metacello new baseline: name; repository: repository; yourself.
-			[ groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ] ]
+			[ server suppressRecordingDuring: [ groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ] ] ]
 				on: Warning
 				do: [ :w | warnings add: ([ w messageText asString ] on: Error do: [ :x | w class name ]). w resume ].
 			added := ((PackageOrganizer default packages collect: [ :p | p name ]) asSet difference: before) asSortedCollection asArray.
@@ -370,7 +393,7 @@ StLiveCommands >> cmdImageSave: args [
 StLiveCommands >> cmdImageStop: args [
 	"Destructive: requires force: true."
 	(args at: 'force' ifAbsent: [ false ]) == true
-		ifFalse: [ self fail: 'confirmation_required' message: 'Stopping the image discards all unsaved state and debug sessions; pass force.' ].
+		ifFalse: [ self fail: 'confirmation_required' message: 'Stopping the image discards all unsaved state and debug sessions; pass --force (use `image save` first to keep state).' ].
 	[ (Delay forMilliseconds: 300) wait. Smalltalk quitPrimitive ] forkAt: Processor userInterruptPriority.
 	^ self ok: (self m: { 'stopping' -> true })
 ]
@@ -687,6 +710,24 @@ StLiveCommands >> cmdMethodShow: args [
 ]
 
 { #category : 'code' }
+StLiveCommands >> classChangeEntry: cls origin: origin [
+	^ self m: {
+		'time' -> DateAndTime now printString.
+		'kind' -> 'class-create'.
+		'saved' -> false.
+		'origin' -> origin.
+		'class' -> cls name.
+		'class_name' -> cls name.
+		'package' -> cls package name.
+		'class_package' -> cls package name.
+		'superclass' -> (cls superclass ifNotNil: [ :sc | sc name ]).
+		'instance_variables' -> cls instVarNames asArray.
+		'class_instance_variables' -> cls class instVarNames asArray.
+		'class_variables' -> cls classVarNames asArray.
+		'comment' -> ([ cls comment ] on: Error do: [ :e | nil ]) }
+]
+
+{ #category : 'code' }
 StLiveCommands >> cmdClassCreate: args [
 	| name sup ivars package cls classIvars classVars comment words |
 	name := self need: 'name' in: args.
@@ -697,13 +738,14 @@ StLiveCommands >> cmdClassCreate: args [
 	classVars := words value: 'class_vars'.
 	comment := args at: 'comment' ifAbsent: [ nil ].
 	package := args at: 'package' ifAbsent: [ 'Live-Scratch' ].
-	cls := (sup << name asSymbol)
-		slots: ivars;
-		sharedVariables: classVars;
-		package: package;
-		install.
-	cls class instanceVariableNames: (classIvars inject: '' into: [ :a :w | a , w , ' ' ]) trimBoth.
-	comment ifNotNil: [ cls comment: comment ].
+	server suppressRecordingDuring: [
+		cls := (sup << name asSymbol)
+			slots: ivars;
+			sharedVariables: classVars;
+			package: package;
+			install.
+		cls class instanceVariableNames: (classIvars inject: '' into: [ :a :w | a , w , ' ' ]) trimBoth.
+		comment ifNotNil: [ cls comment: comment ] ].
 	server changes add: (self m: {
 		'time' -> DateAndTime now printString.
 		'kind' -> 'class-create'.
@@ -747,7 +789,7 @@ StLiveCommands >> cmdMethodCompile: args [
 		on: OCCodeError do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	old := cls compiledMethodAt: selector ifAbsent: [ nil ].
 	protocol := args at: 'protocol' ifAbsent: [ old ifNil: [ 'as yet unclassified' ] ifNotNil: [ :o | o protocol name ] ].
-	new := [ cls compile: source classified: protocol ]
+	new := [ server suppressRecordingDuring: [ cls compile: source classified: protocol ] ]
 		on: OCCodeError, OCUndeclaredVariableWarning
 		do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	new isNil ifTrue: [ self fail: 'compile_error' message: 'Compilation failed' ].
@@ -780,7 +822,7 @@ StLiveCommands >> cmdMethodCompile: args [
 StLiveCommands >> cmdMethodRemove: args [
 	| cls sel |
 	(args at: 'force' ifAbsent: [ false ]) == true
-		ifFalse: [ self fail: 'confirmation_required' message: 'Removing a method is destructive; pass force.' ].
+		ifFalse: [ self fail: 'confirmation_required' message: 'Removing a method is destructive; pass --force.' ].
 	cls := self classNamed: (self need: 'class' in: args).
 	sel := (self need: 'selector' in: args) asSymbol.
 	(cls includesSelector: sel) ifFalse: [ self fail: 'unknown_method' message: 'No method ' , cls printString , '>>#' , sel ].
@@ -795,7 +837,7 @@ StLiveCommands >> cmdMethodRemove: args [
 		'class' -> cls printString.
 		'selector' -> sel.
 		'old_source' -> (self lf: (cls >> sel) sourceCode) }).
-	cls removeSelector: sel.
+	server suppressRecordingDuring: [ cls removeSelector: sel ].
 	^ self ok: (self m: { 'removed' -> true })
 ]
 
@@ -814,14 +856,14 @@ StLiveCommands >> unsavedByPackage [
 { #category : 'code' }
 StLiveCommands >> cmdChangesList: args [
 	| offset limit all |
-	offset := self int: 'offset' in: args default: 0.
+	offset := (args includesKey: 'since') ifTrue: [ self int: 'since' in: args default: 0 ] ifFalse: [ self int: 'offset' in: args default: 0 ].
 	limit := self int: 'limit' in: args default: 20.
 	all := server changes asArray.
 	^ self ok: (self m: {
 		'total' -> all size.
 		'unsaved_by_package' -> (self unsavedByPackage).
 		'changes' -> ((all copyFrom: (offset + 1 min: all size + 1) to: (offset + limit min: all size)) withIndexCollect: [ :c :i |
-			self m: { 'index' -> (offset + i). 'time' -> (c at: 'time'). 'kind' -> (c at: 'kind'). 'class' -> (c at: 'class' ifAbsent: [ nil ]). 'selector' -> (c at: 'selector' ifAbsent: [ nil ]) } ]) })
+			self m: { 'index' -> (offset + i). 'time' -> (c at: 'time'). 'kind' -> (c at: 'kind'). 'class' -> (c at: 'class' ifAbsent: [ nil ]). 'selector' -> (c at: 'selector' ifAbsent: [ nil ]). 'package' -> (c at: 'package' ifAbsent: [ nil ]). 'origin' -> (c at: 'origin' ifAbsent: [ 'cli' ]). 'saved' -> (c at: 'saved' ifAbsent: [ true ]) } ]) })
 ]
 
 { #category : 'code' }
@@ -971,7 +1013,7 @@ StLiveCommands >> cmdTestRun: args [
 		sel := pair second.
 		testId := cls name , '>>' , sel.
 		response := self
-			runBlock: [ (cls selector: sel) runCase ]
+			runBlock: [ server suppressRecordingDuring: [ (cls selector: sel) runCase ] ]
 			origin: (self originCmd: 'test.run' args: (self m: { 'target' -> testId. 'timeout' -> timeout }))
 			timeout: timeout
 			mode: 'first'.

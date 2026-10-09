@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+- `stlive attach --port N`: load the server into an image that is already running (started by an older tool or any JSON-line server), no restart needed.
+- `stlive init --vm <Pharo> --image <Pharo.image>`: use a local Pharo instead of downloading.
+- Changes made by `eval` or the IDE (e.g. `compile:`, adding instance variables) are now recorded like CLI changes (`origin: "eval"`) and written by `save`; `save` also updates the variable lists of an existing class definition. Bulk loads and test runs are not recorded.
+- `changes list --since N` and `changes watch` (JSON lines stream of new changes).
+- Call log lines carry a 60-character `summary` of the call.
+- `eval --no-source` drops statement text from error frames; frame statements are capped at 160 characters.
+- Error messages for `method remove` and `stop` name `--force`.
+- `stop` no longer gives up when the dying image does not answer.
+
 ## 0.2.0
 - Call log: `--log` / `STLIVE_LOG`, `--tag` / `STLIVE_TAG` (metadata only).
 - `method compile` errors carry the undeclared variable, line and column (previously an empty message).

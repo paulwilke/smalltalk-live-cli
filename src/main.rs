@@ -51,6 +51,21 @@ enum Cmd {
         /// Re-download and rebuild even if present
         #[arg(long)]
         force: bool,
+        /// Use this local Pharo VM instead of downloading (needs --image)
+        #[arg(long, requires = "image")]
+        vm: Option<PathBuf>,
+        /// Use this pristine Pharo image as the base instead of downloading (needs --vm)
+        #[arg(long, requires = "vm")]
+        image: Option<PathBuf>,
+    },
+    /// Load the StLive server into an image that is ALREADY running (another stlive/pharoctl server on --port)
+    Attach {
+        /// Port of the running server (its state file: <dir>/<instance>.port.json)
+        #[arg(long)]
+        port: u16,
+        /// Process id of that image (found with lsof if omitted)
+        #[arg(long)]
+        pid: Option<i32>,
     },
     /// List instances known in the state directory
     Instances,
@@ -88,6 +103,9 @@ enum Cmd {
         /// On failure report the error but do not keep a suspended debug session
         #[arg(long)]
         no_session: bool,
+        /// Leave the statement text out of error frames
+        #[arg(long)]
+        no_source: bool,
     },
     /// Inspect objects by reference
     #[command(subcommand)]
@@ -217,7 +235,10 @@ enum MethodCmd {
 
 #[derive(Subcommand)]
 enum ChangesCmd {
-    List { #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64> },
+    /// Recorded changes (also those made by eval or the IDE); --since N lists entries after index N
+    List { #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64>, #[arg(long)] since: Option<u64> },
+    /// Stream new changes as JSON lines until interrupted (polls every --interval ms)
+    Watch { #[arg(long, default_value_t = 500)] interval: u64 },
     Show { index: u64 },
 }
 
@@ -411,35 +432,33 @@ fn die(code: i32, err_code: &str, message: String, pretty: bool) -> ! {
 
 // ---------------------------------------------------------------- transport
 
-fn call(inst: &Instance, cmd: &str, args: Value, read_timeout: Duration, pretty: bool) -> Value {
-    let info = match inst.port_info() {
-        Some(i) => i,
-        None => die(3, "not_running", format!("Instance '{}' is not running (no port file in {}). Start it with: stlive start", inst.name, inst.dir.display()), pretty),
-    };
+/// Talk to an instance; `Err((exit code, error code, message))` instead of exiting.
+fn try_call(inst: &Instance, cmd: &str, args: Value, read_timeout: Duration) -> Result<Value, (i32, &'static str, String)> {
+    let info = inst.port_info().ok_or_else(|| (3, "not_running", format!("Instance '{}' is not running (no port file in {}). Start it with: stlive start", inst.name, inst.dir.display())))?;
     let port = info["port"].as_u64().unwrap_or(0) as u16;
-    let mut stream = match TcpStream::connect_timeout(&format!("127.0.0.1:{}", port).parse().unwrap(), Duration::from_secs(3)) {
-        Ok(s) => s,
-        Err(e) => die(3, "unreachable", format!("Cannot reach instance '{}' on 127.0.0.1:{} ({}). It may have exited; run: stlive start", inst.name, port, e), pretty),
-    };
+    let mut stream = TcpStream::connect_timeout(&format!("127.0.0.1:{}", port).parse().unwrap(), Duration::from_secs(3))
+        .map_err(|e| (3, "unreachable", format!("Cannot reach instance '{}' on 127.0.0.1:{} ({}). It may have exited; run: stlive start", inst.name, port, e)))?;
     let _ = stream.set_read_timeout(Some(read_timeout));
     let request = json!({"cmd": cmd, "args": args});
-    if let Err(e) = stream.write_all(format!("{}\n", request).as_bytes()) {
-        die(3, "connection_lost", format!("Write failed: {}", e), pretty);
-    }
+    stream.write_all(format!("{}\n", request).as_bytes()).map_err(|e| (3, "connection_lost", format!("Write failed: {}", e)))?;
     let mut buf = Vec::new();
     match stream.read_to_end(&mut buf) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-            die(5, "timeout", format!("No response within {:?}. The image may be busy; the request may still be running.", read_timeout), pretty)
+            return Err((5, "timeout", format!("No response within {:?}. The image may be busy; the request may still be running.", read_timeout)))
         }
-        Err(e) => die(3, "connection_lost", format!("Connection lost while waiting for the response: {}", e), pretty),
+        Err(e) => return Err((3, "connection_lost", format!("Connection lost while waiting for the response: {}", e))),
     }
     if buf.is_empty() {
-        die(4, "empty_response", "The image closed the connection without a response".into(), pretty);
+        return Err((4, "empty_response", "The image closed the connection without a response".into()));
     }
-    match serde_json::from_slice(&buf) {
+    serde_json::from_slice(&buf).map_err(|e| (4, "bad_response", format!("Response is not valid JSON: {}", e)))
+}
+
+fn call(inst: &Instance, cmd: &str, args: Value, read_timeout: Duration, pretty: bool) -> Value {
+    match try_call(inst, cmd, args, read_timeout) {
         Ok(v) => v,
-        Err(e) => die(4, "bad_response", format!("Response is not valid JSON: {}", e), pretty),
+        Err((code, err, msg)) => die(code, err, msg, pretty),
     }
 }
 
@@ -460,8 +479,25 @@ fn iso_now() -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", year, month, day, rem / 3600, rem % 3600 / 60, rem % 60, ms)
 }
 
-/// One JSON line per call; metadata only (no arguments, no source code).
-fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, dur: Duration, resp: &Value, exit: i32) {
+/// A short, single-line description of a call for the log (first 60 characters of code / the main argument).
+fn summarize(cmd: &str, args: &Value) -> String {
+    let pick = ["code", "target", "name", "class", "session", "ref", "pattern", "selector", "package"]
+        .iter()
+        .find_map(|k| args[*k].as_str().map(|v| (*k, v.to_string())));
+    let text = match (cmd, pick) {
+        ("method.compile", _) => {
+            let first = args["source"].as_str().unwrap_or("").lines().next().unwrap_or("").trim().to_string();
+            format!("{} >> {}", args["class"].as_str().unwrap_or("?"), first)
+        }
+        (_, Some((_, v))) => v,
+        _ => String::new(),
+    };
+    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() > 60 { format!("{}...", one_line.chars().take(60).collect::<String>()) } else { one_line }
+}
+
+/// One JSON line per call: metadata and a 60-character summary of the call (no full code).
+fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, summary: &str, dur: Duration, resp: &Value, exit: i32) {
     let r = &resp["result"];
     let e = &resp["error"];
     let pick = |keys: &[&str]| -> Value {
@@ -477,6 +513,7 @@ fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, dur: Dur
         "tag": tag,
         "instance": instance,
         "command": cmd,
+        "summary": summary,
         "duration_ms": dur.as_millis() as u64,
         "output_chars": serde_json::to_string(resp).map(|s| s.chars().count()).unwrap_or(0),
         "ok": resp["ok"] == json!(true),
@@ -618,7 +655,7 @@ fn stop(inst: &Instance, force: bool, pretty: bool) {
     if !force {
         die(2, "confirmation_required", "Stopping discards all unsaved image state and debug sessions. Re-run with --force (use `stlive image save` first to keep state).".into(), pretty);
     }
-    let _ = call(inst, "image.stop", json!({"force": true}), Duration::from_secs(5), pretty);
+    let _ = try_call(inst, "image.stop", json!({"force": true}), Duration::from_secs(5)); // a dying image may not answer; fall through to the kill below
     let deadline = Instant::now() + Duration::from_secs(10);
     while inst.alive() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
@@ -687,6 +724,65 @@ fn save_changes(inst: &Instance, package: Option<String>, all: bool, dir: &Path,
     emit(&json!({"ok": true, "result": {"dry_run": dry_run, "packages": by_pkg.keys().collect::<Vec<_>>(), "changes": marked.len(), "files": files, "skipped_without_package": skipped}}), pretty);
 }
 
+fn watch_changes(inst: &Instance, interval: u64, pretty: bool) {
+    let mut seen: u64 = 0;
+    loop {
+        let r = call(inst, "changes.list", json!({"since": seen, "limit": 200}), Duration::from_secs(30), pretty);
+        if r["ok"] != json!(true) {
+            emit(&r, pretty);
+            std::process::exit(1);
+        }
+        for c in r["result"]["changes"].as_array().cloned().unwrap_or_default() {
+            seen = seen.max(c["index"].as_u64().unwrap_or(seen));
+            emit(&c, false);
+        }
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(Duration::from_millis(interval));
+    }
+}
+
+/// Load the StLive server into a running image through its existing JSON-line server.
+fn attach(inst: &Instance, old_port: u16, pid: Option<i32>, pretty: bool) {
+    let home = init::home_dir();
+    let packages = match init::system_packages(&home) {
+        Some(p) => p,
+        None => die(2, "not_initialized", "attach needs the framework package list written by `stlive init` (run it once; it can use your local Pharo with --vm/--image)".into(), pretty),
+    };
+    let src = match init::write_sources(&home) {
+        Ok(s) => s,
+        Err(e) => die(1, "write_failed", e, pretty),
+    };
+    let portfile = inst.path("port.json");
+    let _ = std::fs::create_dir_all(&inst.dir);
+    let list = packages.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(" ");
+    let code = format!(
+        "Metacello new baseline: 'StLive'; repository: 'tonel://{src}'; load.\n\
+         (Smalltalk globals at: #StLiveServer) recordSystemPackagesFrom: #({list}).\n\
+         (Smalltalk globals at: #StLiveServer) current startPortFile: '{pf}'.",
+        src = src.display(),
+        list = list,
+        pf = portfile.display()
+    );
+    let tmp = Instance { dir: inst.dir.clone(), name: "attach-old".into() };
+    let _ = std::fs::write(tmp.path("port.json"), json!({"port": old_port}).to_string());
+    let r = call(&tmp, "eval", json!({"code": code, "timeout": 600000}), Duration::from_secs(660), pretty);
+    let _ = std::fs::remove_file(tmp.path("port.json"));
+    if r["ok"] != json!(true) {
+        emit(&r, pretty);
+        std::process::exit(1);
+    }
+    let pid = pid.or_else(|| {
+        let out = Command::new("lsof").args(["-ti", &format!("tcp:{}", old_port), "-sTCP:LISTEN"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).lines().next()?.trim().parse().ok()
+    });
+    if let Some(p) = pid {
+        let _ = std::fs::write(inst.path("pid"), p.to_string());
+    }
+    let info = inst.port_info().unwrap_or(json!({}));
+    emit(&json!({"ok": true, "result": {"attached": true, "instance": inst.name, "port": info["port"], "epoch": info["epoch"], "pid": pid, "note": "The old server keeps running in the same image on its own port; use `stlive` from now on."}}), pretty);
+}
+
 fn clone_image(inst: &Instance, name: &str, start_it: bool, pretty: bool) {
     let cfg: Value = std::fs::read_to_string(inst.path("config.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
     let (vm, image) = match (cfg["vm"].as_str(), cfg["image"].as_str()) {
@@ -725,9 +821,10 @@ fn main() {
     let inst = Instance { dir: resolve_state_dir(&cli.state_dir, creating), name: cli.instance.clone() };
 
     let (cmd, args, timeout_ms): (String, Value, Option<u64>) = match cli.cmd {
-        Cmd::Init { force } => {
+        Cmd::Attach { port, pid } => return attach(&inst, port, pid, pretty),
+        Cmd::Init { force, vm, image } => {
             let home = init::home_dir();
-            match init::init(&home, force) {
+            match init::init(&home, force, vm.zip(image)) {
                 Ok(r) => return emit(&json!({"ok": true, "result": r}), pretty),
                 Err(e) => die(1, "init_failed", e, pretty),
             }
@@ -737,12 +834,13 @@ fn main() {
         Cmd::Stop { force } => return stop(&inst, force, pretty),
         Cmd::Status => ("status".into(), json!({}), None),
         Cmd::Ping => ("ping".into(), json!({}), None),
-        Cmd::Eval { code, receiver, timeout, full, no_session } => {
+        Cmd::Eval { code, receiver, timeout, full, no_session, no_source } => {
             let code = if code == "-" { read_stdin() } else { code };
             let mut m = Map::new();
             m.insert("code".into(), code.into());
             if full { m.insert("full".into(), true.into()); }
             if no_session { m.insert("no_session".into(), true.into()); }
+            if no_source { m.insert("no_source".into(), true.into()); }
             opt(&mut m, "in", receiver);
             opt(&mut m, "timeout", timeout);
             ("eval".into(), Value::Object(m), timeout)
@@ -844,8 +942,10 @@ fn main() {
             MethodCmd::Remove { class, selector, force } => ("method.remove".into(), json!({"class": class, "selector": selector, "force": force}), None),
         },
         Cmd::Changes(c) => match c {
-            ChangesCmd::List { offset, limit } => {
+            ChangesCmd::Watch { interval } => return watch_changes(&inst, interval, pretty),
+            ChangesCmd::List { offset, limit, since } => {
                 let mut m = Map::new();
+                opt(&mut m, "since", since);
                 opt(&mut m, "offset", offset);
                 opt(&mut m, "limit", limit);
                 ("changes.list".into(), Value::Object(m), None)
@@ -946,6 +1046,7 @@ fn main() {
     // the socket timeout only guards against a wedged image.
     let read_timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000) + 15_000);
     let started = Instant::now();
+    let summary = summarize(&cmd, &args);
     let mut resp = call(&inst, &cmd, args, read_timeout, pretty);
     if cmd == "changes.show" {
         add_diff(&mut resp);
@@ -953,7 +1054,7 @@ fn main() {
     emit(&resp, pretty);
     let code = exit_code_for(&resp);
     if let Some(path) = &cli.log {
-        write_log(path, cli.tag.as_deref(), &inst.name, &cmd, started.elapsed(), &resp, code);
+        write_log(path, cli.tag.as_deref(), &inst.name, &cmd, &summary, started.elapsed(), &resp, code);
     }
     std::process::exit(code);
 }

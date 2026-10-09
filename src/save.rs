@@ -140,6 +140,52 @@ fn render_class(c: &Value, symbol_style: bool, package: &str) -> String {
     s
 }
 
+/// Variable names listed under `#key : [ ... ]` in a class definition block.
+fn listed(block: &str, key: &str) -> Vec<String> {
+    let marker = format!("#{} : [", key);
+    match block.find(&marker) {
+        None => vec![],
+        Some(i) => {
+            let rest = &block[i + marker.len()..];
+            let end = rest.find(']').unwrap_or(rest.len());
+            rest[..end].split('\'').enumerate().filter(|(n, _)| n % 2 == 1).map(|(_, v)| v.to_string()).collect()
+        }
+    }
+}
+
+/// If the image's class has other instance/class variables than the file, re-render the definition block
+/// (keeping name, superclass and package/category lines of the file); otherwise answer None.
+fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &str) -> Option<String> {
+    let start = text.find("Class {")?;
+    let end = start + text[start..].find("\n}")? + 2;
+    let block = &text[start..end];
+    let wanted = [
+        ("instVars", str_list(c, "instance_variables")),
+        ("classVars", str_list(c, "class_variables")),
+        ("classInstVars", str_list(c, "class_instance_variables")),
+    ];
+    if wanted.iter().all(|(k, v)| &listed(block, k) == v) {
+        return None;
+    }
+    let keep = |prefix: &str| block.lines().find(|l| l.trim_start().starts_with(prefix)).map(|l| l.to_string());
+    let mut out = String::from("Class {\n");
+    for p in ["#name :", "#superclass :"] {
+        if let Some(l) = keep(p) { out.push_str(&l); out.push('\n'); }
+    }
+    for (k, v) in &wanted {
+        if !v.is_empty() {
+            let body = v.iter().map(|x| format!("\t\t'{}'", x)).collect::<Vec<_>>().join(",\n");
+            out.push_str(&format!("\t#{} : [\n{}\n\t],\n", k, body));
+        }
+    }
+    let tail = keep("#package :").or_else(|| keep("#category :")).unwrap_or_else(|| {
+        if symbol_style { format!("\t#category : {}", sym(package, true)) } else { format!("\t#package : '{}'", package) }
+    });
+    out.push_str(&tail);
+    out.push_str("\n}");
+    Some(format!("{}{}{}", &text[..start], out, &text[end..]))
+}
+
 #[derive(Default)]
 struct FileStats {
     created: bool,
@@ -159,7 +205,10 @@ pub fn plan(changes: &[Value], package: &str, dir: &Path, dry_run: bool) -> Resu
     for c in changes {
         marked.push(c["index"].as_u64().unwrap_or(0));
         match c["kind"].as_str().unwrap_or("") {
-            "class-create" => class_defs.push(c),
+            "class-create" => {
+                class_defs.retain(|x| x["class_name"] != c["class_name"]);
+                class_defs.push(c)
+            }
             "method-compile" | "method-remove" => {
                 let key = (
                     c["class_name"].as_str().unwrap_or("").to_string(),
@@ -189,7 +238,13 @@ pub fn plan(changes: &[Value], package: &str, dir: &Path, dry_run: bool) -> Resu
         let name = c["class_name"].as_str().unwrap_or("");
         let path = pkg_dir.join(format!("{}.class.st", name));
         if path.exists() {
-            continue; // never rewrite an existing class definition automatically
+            // existing file: only update the variable lists of the class definition if they changed
+            let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            if let Some(updated) = patch_class_definition(&text, c, symbol_style, package) {
+                contents.insert(path.clone(), updated);
+                stats.entry(path).or_default().replaced.push(format!("{} (class definition)", name));
+            }
+            continue;
         }
         contents.insert(path.clone(), render_class(c, symbol_style, package));
         stats.entry(path).or_default().created = true;

@@ -20,7 +20,8 @@ Class {
 		'describer',
 		'commands',
 		'changes',
-		'portFile'
+		'portFile',
+		'suppressDepth'
 	],
 	#classVars : [
 		'Current',
@@ -43,6 +44,12 @@ StLiveServer class >> recordSystemPackages [
 { #category : 'accessing' }
 StLiveServer class >> systemPackages [
 	^ SystemPackages ifNil: [ Set new ]
+]
+
+{ #category : 'accessing' }
+StLiveServer class >> recordSystemPackagesFrom: names [
+	"Used when attaching to an image that already contains application code."
+	SystemPackages := names asSet
 ]
 
 { #category : 'starting' }
@@ -74,6 +81,7 @@ StLiveServer >> initialize [
 	changes := OrderedCollection new.
 	startedAt := DateAndTime now.
 	running := false.
+	suppressDepth := 0.
 	describer := StLiveDescriber on: self.
 	commands := StLiveCommands on: self
 ]
@@ -238,6 +246,7 @@ StLiveServer >> startPortFile: aPath [
 	listener listenOn: 0 backlogSize: 16 interface: #[ 127 0 0 1 ].
 	running := true.
 	StLiveTranscriptTee install.
+	self subscribeToSystemChanges.
 	[ self acceptLoop ] forkAt: Processor userInterruptPriority named: 'stlive-acceptor'.
 	aPath ifNotNil: [
 		aPath asFileReference writeStreamDo: [ :s |
@@ -325,4 +334,87 @@ StLiveServer >> handleLine: aString [
 			at: 'epoch' put: epoch;
 			at: 'error' put: (OrderedDictionary new at: 'code' put: 'serialization_error'; at: 'message' put: e messageText asString; yourself);
 			yourself) ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> suppressRecordingDuring: aBlock [
+	"Changes made by the tool itself (already logged) or by bulk loads are not recorded again."
+	suppressDepth := suppressDepth + 1.
+	^ aBlock ensure: [ suppressDepth := suppressDepth - 1 ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> subscribeToSystemChanges [
+	| announcer |
+	announcer := SystemAnnouncer uniqueInstance.
+	announcer unsubscribe: self.
+	announcer weak
+		when: MethodAdded send: #methodChanged: to: self;
+		when: MethodModified send: #methodChanged: to: self;
+		when: MethodRemoved send: #methodRemoved: to: self;
+		when: ClassAdded send: #classChanged: to: self;
+		when: ClassModifiedClassDefinition send: #classChanged: to: self
+]
+
+{ #category : 'recording' }
+StLiveServer >> isOwnClass: aClass [
+	^ (aClass instanceSide name beginsWith: 'StLive') or: [ aClass instanceSide name beginsWith: 'BaselineOfStLive' ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> methodChanged: announcement [
+	"Eval-made (or GUI-made) method changes end up in the same change log as CLI compiles."
+	| m cls old |
+	suppressDepth > 0 ifTrue: [ ^ self ].
+	[ m := announcement method.
+	cls := m methodClass.
+	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
+	m selector == #DoIt ifTrue: [ ^ self ].
+	old := (announcement respondsTo: #oldMethod) ifTrue: [ announcement oldMethod ] ifFalse: [ nil ].
+	changes add: (OrderedDictionary new
+		at: 'time' put: DateAndTime now printString;
+		at: 'kind' put: 'method-compile';
+		at: 'saved' put: false;
+		at: 'origin' put: 'eval';
+		at: 'package' put: (m package name);
+		at: 'class_package' put: cls instanceSide package name;
+		at: 'class_name' put: cls instanceSide name;
+		at: 'side' put: (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]);
+		at: 'class' put: cls printString;
+		at: 'selector' put: m selector;
+		at: 'protocol' put: ([ m protocol name ] on: Error do: [ :e | 'as yet unclassified' ]);
+		at: 'old_source' put: (old ifNotNil: [ :o | commands lf: o sourceCode ]);
+		at: 'new_source' put: (commands canonicalSourceOf: m);
+		yourself) ] on: Error do: [ :e | nil ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> methodRemoved: announcement [
+	| m cls |
+	suppressDepth > 0 ifTrue: [ ^ self ].
+	[ m := announcement method.
+	cls := m methodClass.
+	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
+	changes add: (OrderedDictionary new
+		at: 'time' put: DateAndTime now printString;
+		at: 'kind' put: 'method-remove';
+		at: 'saved' put: false;
+		at: 'origin' put: 'eval';
+		at: 'package' put: (m package name);
+		at: 'class_package' put: cls instanceSide package name;
+		at: 'class_name' put: cls instanceSide name;
+		at: 'side' put: (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]);
+		at: 'class' put: cls printString;
+		at: 'selector' put: m selector;
+		at: 'old_source' put: (commands lf: m sourceCode);
+		yourself) ] on: Error do: [ :e | nil ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> classChanged: announcement [
+	| cls |
+	suppressDepth > 0 ifTrue: [ ^ self ].
+	[ cls := (announcement respondsTo: #classAffected) ifTrue: [ announcement classAffected ] ifFalse: [ announcement classAdded ].
+	(cls isNil or: [ cls isMeta or: [ self isOwnClass: cls ] ]) ifTrue: [ ^ self ].
+	changes add: (commands classChangeEntry: cls origin: 'eval') ] on: Error do: [ :e | nil ]
 ]

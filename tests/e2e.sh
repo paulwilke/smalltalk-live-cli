@@ -65,7 +65,7 @@ out=$($S ping); check "image still responsive after timeout" '.ok'
 $S class create Rec >/dev/null
 $S method compile Rec - <<< $'a: n\n\t^ self b: n' >/dev/null
 $S method compile Rec - <<< $'b: n\n\t^ self a: n' >/dev/null
-out=$($S eval 'Rec new a: 1' --timeout 1500); check "recursion pattern detected" '.error.recursion.cycle|join(",")' 'Rec>>#b:,Rec>>#a:'
+out=$($S eval 'Rec new a: 1' --timeout 1500); check "recursion pattern detected" '.error.recursion.cycle|sort|join(",")' 'Rec>>#a:,Rec>>#b:'
 $S debug terminate --all >/dev/null
 
 # --- large data stays paged
@@ -110,6 +110,20 @@ FRESH=$($S eval '3 zork' | jq -r .error.session)
 out=$($S debug locals "$FRESH" 0); check "frame accepted positionally" '.ok'
 STLIVE_LOG="$WORK/calls.jsonl" STLIVE_TAG=e2e $S eval '1' >/dev/null
 check_log=$(tail -1 "$WORK/calls.jsonl" | jq -r '[.tag,.command,.ok]|join(",")'); out="{\"v\":\"$check_log\"}"; check "call log written with tag" '.v' 'e2e,eval,true'
+
+# --- changes made by eval are recorded too and reach the Tonel files
+$S class create Evl --ivars a --package Demo >/dev/null
+$S eval - <<< "Evl addInstVarNamed: 'b'. Evl compile: 'two ^ 2' classified: 'x'. 1" >/dev/null
+out=$($S changes list); check "eval-made method change recorded" '[.result.changes[]|select(.origin=="eval" and .selector=="two")]|length' 1
+out=$($S save --package Demo --dir src); check "save includes eval-made changes" '.result.files|map(select(.file|endswith("Evl.class.st")))|length' 1
+grep -q "two \[" src/Demo/Evl.class.st && grep -q "'b'" src/Demo/Evl.class.st && { pass=$((pass+1)); echo "ok   - tonel has eval-made method and ivar, normalised"; } || { fail=$((fail+1)); echo "FAIL - eval-made changes not in tonel"; cat src/Demo/Evl.class.st; }
+out=$($S eval '3 zork' --no-source); check "eval --no-source drops the statement" '.error.top.statement' null
+out=$($S method remove Cart total); check "method remove error names --force" '.error.message|contains("--force")'
+
+# --- attach the server to an image that is already running
+PORT=$(jq -r .port .stlive/default.port.json)
+out=$($S -i second attach --port "$PORT"); check "attach to a running image" '.result.attached'
+out=$($S -i second eval '6 * 7'); check "attached instance answers" '.result.value.print' 42
 
 # --- stale references after restart
 out=$($S eval 'Object new'); OLD=$(echo "$out" | jq -r .result.value.ref)

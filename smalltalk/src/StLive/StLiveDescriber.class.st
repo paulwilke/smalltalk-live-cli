@@ -170,7 +170,7 @@ StLiveDescriber >> frame: aContext index: i [
 	d at: 'stale' put: (self isStale: aContext).
 	stmt := self statementOf: aContext.
 	stmt := stmt ifNotNil: [ (stmt copyReplaceAll: String crlf with: String lf) copyReplaceAll: String cr with: String lf ].
-	stmt ifNotNil: [ d at: 'statement' put: (stmt size > 200 ifTrue: [ (stmt copyFrom: 1 to: 200) , '...' ] ifFalse: [ stmt ]) ].
+	stmt ifNotNil: [ d at: 'statement' put: (stmt size > 160 ifTrue: [ (stmt copyFrom: 1 to: 160) , '...' ] ifFalse: [ stmt ]) ].
 	^ d
 ]
 

@@ -9,6 +9,7 @@ Usage: stlive [OPTIONS] <COMMAND>
 
 Commands:
   init       One-time setup: download Pharo 13 and build an image with the StLive server
+  attach     Load the StLive server into an image that is ALREADY running (another stlive/pharoctl server on --port)
   instances  List instances known in the state directory
   start      Start the image headless in the background
   stop       Stop the image (destructive: unsaved state and debug sessions are lost)
@@ -51,6 +52,8 @@ Options:
       --force                  Re-download and rebuild even if present
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --vm <VM>                Use this local Pharo VM instead of downloading (needs --image)
+      --image <IMAGE>          Use this pristine Pharo image as the base instead of downloading (needs --vm)
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
@@ -165,6 +168,7 @@ Options:
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --no-session             On failure report the error but do not keep a suspended debug session
+      --no-source              Leave the statement text out of error frames
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
@@ -638,9 +642,10 @@ Recorded changes made through this CLI
 Usage: stlive changes [OPTIONS] <COMMAND>
 
 Commands:
-  list  
-  show  
-  help  Print this message or the help of the given subcommand(s)
+  list   Recorded changes (also those made by eval or the IDE); --since N lists entries after index N
+  watch  Stream new changes as JSON lines until interrupted (polls every --interval ms)
+  show   
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
@@ -655,12 +660,33 @@ Options:
 ### `stlive changes list`
 
 ```
+Recorded changes (also those made by eval or the IDE); --since N lists entries after index N
+
 Usage: stlive changes list [OPTIONS]
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --offset <OFFSET>        
       --limit <LIMIT>          
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --since <SINCE>          
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+### `stlive changes watch`
+
+```
+Stream new changes as JSON lines until interrupted (polls every --interval ms)
+
+Usage: stlive changes watch [OPTIONS]
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --interval <INTERVAL>    [default: 500]
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]

@@ -64,17 +64,26 @@ stlive stop --force
 
 Several images can run side by side (`--instance NAME`, `stlive image clone`, `stlive instances`). `--text` prints an indented human-readable form instead of JSON; `--pretty` pretty-prints JSON.
 
-`--log FILE` (or `STLIVE_LOG`) appends one JSON line per call (time, command, duration, output size, ok, key result fields) and `--tag`/`STLIVE_TAG` marks a scene or task – metadata only, no code.
+`--log FILE` (or `STLIVE_LOG`) appends one JSON line per call (time, command, duration, output size, ok, key result fields) and `--tag`/`STLIVE_TAG` marks a scene or task – metadata and a 60-character summary of the call, never full code.
 
 Exit codes: `0` ok · `1` command failed, exception in the image or failing tests · `2` usage · `3` image not running/unreachable · `4` protocol error · `5` timeout.
+
+### Already have a running image?
+
+```bash
+stlive init --vm /path/to/Pharo --image /path/to/Pharo.image   # once: use your local Pharo (no download); also records the framework package list
+stlive attach --port <port of the running server>                # loads the server into the RUNNING image, no restart
+```
+
+An image started by an older version of this tool (or any server that speaks the same JSON-line protocol) keeps running; `stlive` then talks to it through its own port. Everything done through `eval` or the IDE is recorded as well, so `save` can write it back.
 
 ### What you can do
 
 | Area | Commands |
 |---|---|
-| Image | `init`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` |
+| Image | `init` (`--vm`/`--image` for a local Pharo), `attach`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` |
 | Evaluate | `eval` (stdin with `-`, `--in <ref>` as receiver, `--timeout`, `--full` complete text, `--no-session`; Transcript and deprecations reported separately) |
-| Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment), `method show\|compile\|remove`, `package list`, `changes list\|show` |
+| Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment), `method show\|compile\|remove`, `package list`, `changes list\|show\|watch` |
 | Tests | `test list`, `test run` (per test isolation, failures **grouped by cause**, one session kept per group) |
 | Objects | `obj show\|items\|var\|text\|compare\|referrers\|graph\|release` – paged, with stable references; `graph` marks cycles and shared nodes |
 | Debugging | `debug list\|inspect\|frames\|frame\|locals\|receiver\|eval\|resume\|restart\|return\|rerun\|terminate` |
