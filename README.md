@@ -1,8 +1,31 @@
-# stlive – a live-debugging CLI for Smalltalk (Pharo)
+# stlive – let an AI agent debug Smalltalk by looking at the running program
 
-**Give a coding agent (or yourself, from a shell) the thing that makes Smalltalk special: a running system whose failed executions you can open up, inspect, repair and continue – without restarting anything.**
+`stlive` is a command-line tool for **Pharo Smalltalk**. It keeps one Pharo image running in the background and lets you – or a coding agent such as Claude Code – work *inside* it from a shell:
 
-`stlive` talks to a long-running headless [Pharo](https://pharo.org) image. A failed `eval` or test does not produce a stack-trace string; it leaves a *live debug session* in the image that you can query across many short CLI calls – frame by frame, object by object – then fix the method in the running image, re-run the original operation, and finally write the change back to Tonel files with a minimal `git diff`.
+- run code and, when it crashes, **keep the crashed program alive** instead of getting a wall of text,
+- **look around** in it, step by step: which call failed, what were the variables, what does that object contain,
+- **fix the method right there**, without restarting anything,
+- **run the operation again**, run the tests, and
+- **write the fix back** into your source files as a small, clean `git diff`.
+
+Normally an agent edits files, restarts the program and reads a log. Smalltalk can do much better because the program *is* the development environment – `stlive` hands that ability to the agent.
+
+## What can I do with it?
+
+| I want to… | Command |
+|---|---|
+| run some code in my running app | `stlive eval 'Cart new total'` |
+| see why it crashed – without a 200-line stack trace | `stlive debug frames dbg-… --limit 5`, then `stlive debug frame dbg-… 3` |
+| look at an object and what it points to | `stlive obj show obj-…`, `stlive obj graph obj-… --depth 3` |
+| try an idea inside the failing method's context | `stlive debug eval dbg-… --frame 3 'sum + 1'` |
+| fix a method in the running app | `stlive method compile Cart --file total.st` |
+| prove the fix, not just hope | `stlive debug rerun dbg-…` (runs the original operation again with the new code) |
+| run tests and see failures *grouped by cause* | `stlive test run MyApp-Tests` |
+| get the fix into my git repo | `stlive save --package MyApp --dir src` |
+
+Every answer is small JSON (or readable text with `--text`), paged and with references to dig deeper – so an agent never has to read huge dumps.
+
+## Two minutes: a crash, a fix, a proof
 
 ```text
 $ stlive eval - <<< "| c | c := Cart new. c setUp. c add: 10. c total"
@@ -13,32 +36,41 @@ $ stlive debug frames dbg-3fa-1 --limit 4 | jq -c '.result.frames[]|[.index,.lab
 [0,"UndefinedObject(Object)>>#adaptToInteger:andSend:","framework"]
 [1,"SmallInteger(Integer)>>#+","framework"]
 [2,"SmallInteger>>#+","framework"]
-[3,"Cart>>#total","application"]
+[3,"Cart>>#total","application"]            <- our own code: the tax rate is nil
 
-$ stlive debug frame dbg-3fa-1 3 --no-source | jq -c '.result|{statement,variables}'
-{"statement":"^ sum * (1 + taxRate)","variables":[{"name":"sum","print":"15","kind":"temporary"}]}
-
-$ stlive method compile Cart - <<< $'total\n\t| sum |\n\t...\n\t^ sum * (1 + (taxRate ifNil: [ 0 ]))'
+$ stlive method compile Cart - <<< $'total\n\t...\n\t^ sum * (1 + (taxRate ifNil: [ 0 ]))'
 {"ok":true,"result":{"selector":"total","stale_frames":[{"session":"dbg-3fa-1","frame":3}]}}
 
-$ stlive debug resume dbg-3fa-1     # continues the OLD execution – never claims a repair
-{"ok":false,"mode":"resume","error":{ ... "continued_from":"dbg-3fa-1"}}
+$ stlive debug resume dbg-3fa-1     # continue the OLD, broken run: stlive never calls this a repair
+{"ok":false,"mode":"resume", ...}
 
-$ stlive debug rerun dbg-3fa-1      # the original operation, from scratch, with the new code
+$ stlive debug rerun dbg-3fa-1      # run the original operation again, from scratch, with the new code
 {"ok":true,"result":{"mode":"rerun","fresh_execution":true,"value":{"class":"SmallInteger","print":"15"}}}
 
 $ stlive save --package Demo --dir src && git diff --stat
 ```
 
-## Why
+The crashed run stays in the image as a **debug session** (`dbg-3fa-1`). You can come back to it with any number of separate commands – that is the trick that makes this useful for agents, who call tools one at a time.
 
-Classic agent loops are *edit file → restart process → read a log*. In a live Smalltalk image the state *is* the answer: the object that failed is still there, with its neighbours. `stlive` is a deliberately small interface to that:
+## The skill: how an agent learns to use it
 
-- **Navigation instead of dumps.** Sessions, frames and objects are addressable references (`dbg-…`, `obj-…`). Every answer is compact, paged and says when it was truncated – an agent never has to swallow a full stack trace or a 5-million-element collection.
-- **Resume ≠ re-run ≠ restart, and the tool says so.** Compiling a method does not repair an already-running frame. `debug resume`, `debug restart --frame n` and `debug rerun` are different operations, labelled `fresh_execution` / `fix_verified`; compile results list the `stale_frames` that still run the old code.
-- **Real Pharo, not a re-implementation.** Fixes are compiled by Pharo's own compiler into the live image (`stale` detection, `DebugSession` restart/return, `OpalCompiler` evaluation inside a frame).
-- **Persistent.** The image keeps running between calls; short-lived CLI processes only carry JSON.
-- **Round trip to your repo.** `save` patches Tonel files method by method (new classes, extension methods, class-side methods included), so reviews stay readable.
+An agent that has never seen `stlive` will fumble with it. [`skill/SKILL.md`](skill/SKILL.md) is a short instruction file that teaches the **working loop** – reproduce → look in small steps → form a hypothesis and try it → fix → *re-run (not just resume)* → test → save – plus the traps (shell quoting, `resume` proves nothing, add a regression test and see it fail first, save every package).
+
+Install it for Claude Code by copying it:
+
+```bash
+mkdir -p ~/.claude/skills/stlive && cp skill/SKILL.md ~/.claude/skills/stlive/SKILL.md   # all projects
+# or per project: .claude/skills/stlive/SKILL.md
+```
+
+Then just ask: *"The test `CartTest` fails – find the cause with stlive, fix it and save the change."* Other agents can use the same file as project instructions. Without the skill the tool still works; the skill makes agents use it **efficiently and correctly**.
+
+## Why it is built this way
+
+- **Navigation instead of dumps.** Sessions, frames and objects have short references (`dbg-…`, `obj-…`). Answers are compact, paged and say when they were cut off.
+- **Resume ≠ re-run ≠ restart – and the tool says so.** Recompiling a method does not repair a run that is already half-way through. `debug resume`, `debug restart --frame n` and `debug rerun` are different, labelled operations (`fresh_execution`, `fix_verified`), and `method compile` lists the `stale_frames` that still run old code.
+- **Real Pharo.** Fixes are compiled by Pharo's own compiler into the live image; debugging uses Pharo's own debug machinery.
+- **Round trip to your repo.** `save` patches Tonel files method by method, so code review stays readable.
 
 ## Install
 
@@ -95,17 +127,13 @@ Full reference: [docs/commands.md](docs/commands.md). How it works: [docs/archit
 
 Short version: this is a CLI because a shell is the one integration point every coding agent already has – and the design keeps the *protocol* separate, so an MCP wrapper would be a thin layer on top (see [docs/cli-vs-mcp.md](docs/cli-vs-mcp.md) for the honest trade-offs).
 
-## Using it with a coding agent
-
-[`skill/SKILL.md`](skill/SKILL.md) is a ready-to-use instruction file (for Claude Code skills or any agent's project instructions) describing the investigate → fix → re-run → verify → save loop and the pitfalls.
-
 ## Safety
 
 - The server listens on `127.0.0.1` only, on an ephemeral port published in the instance's state directory. There is **no authentication**: anyone who can connect to that local port can execute arbitrary Smalltalk in the image. Treat it like a local dev REPL, not a service.
 - Destructive operations (`stop`, `method remove`) need `--force`. Output is bounded everywhere; endless loops become sessions after `--timeout` instead of hanging.
 - References and sessions carry the image's run id, so they are rejected as `stale_ref` after a restart rather than silently pointing at something else.
 
-## Limitations (v0.1)
+## Limitations
 
 - Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).

@@ -28,6 +28,7 @@ out=$($S eval '| c | c := Cart new. c setUp. c add: 10. c add: 5. c total'); che
 SESSION=$(echo "$out" | jq -r .error.session)
 check "first application frame found" '.error.first_application_frame' 3
 out=$($S debug frames $SESSION --limit 5); check "frames paginated" '.result.frames|length' 5
+out=$($S debug inspect $SESSION); check "inspect has a failure summary like test run" ".result.failure.first_application_frame.label" "Cart>>#total"
 out=$($S debug frame $SESSION 3); check "frame label" '.result.label' 'Cart>>#total'
 check "temporary classified" '.result.variables[0].kind' temporary
 RECV=$(echo "$out" | jq -r .result.receiver.ref)

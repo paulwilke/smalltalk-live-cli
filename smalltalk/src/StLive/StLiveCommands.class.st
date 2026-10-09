@@ -1065,6 +1065,20 @@ StLiveCommands >> cmdDebugList: args [
 ]
 
 { #category : 'debug' }
+StLiveCommands >> failureSummaryOf: aSession [
+	"Same shape as one failure group entry of test run: status, type, message, top frames, first application frame."
+	| r |
+	r := self failureRecord: (self sessionError: aSession) test: nil.
+	^ self m: {
+		'status' -> (r at: 'status').
+		'type' -> (r at: 'type').
+		'message' -> (r at: 'message').
+		'session' -> aSession id.
+		'top_frames' -> (r at: 'top_frames').
+		'first_application_frame' -> (r at: 'first_application_frame') }
+]
+
+{ #category : 'debug' }
 StLiveCommands >> cmdDebugInspect: args [
 	| s |
 	s := self session: args.
@@ -1080,6 +1094,7 @@ StLiveCommands >> cmdDebugInspect: args [
 		'frame_count_is_lower_bound' -> (s isSuspended and: [ s frameCount >= StLiveSession maxFrames ]).
 		'top' -> (s topContext ifNotNil: [ :c | server describer frame: c index: 0 ]).
 		'first_application_frame' -> (s isSuspended ifTrue: [ self firstApplicationFrame: s ] ifFalse: [ nil ]).
+		'failure' -> (s isSuspended ifTrue: [ self failureSummaryOf: s ] ifFalse: [ nil ]).
 		'recursion' -> (s isSuspended ifTrue: [ self recursionOf: s ] ifFalse: [ nil ]).
 		'continued_from' -> s continuedFrom })
 ]
