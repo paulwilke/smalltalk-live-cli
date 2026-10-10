@@ -1374,7 +1374,7 @@ fn run_program(inst: &Instance, load: Vec<PathBuf>, packages: Vec<String>, prepa
     if eval.is_none() && file.is_none() {
         die(2, "missing_argument", "Give --eval '<expression>' or --file <script.st>.".into(), pretty);
     }
-    let (vm, template) = match init::template(&init::home_dir()) {
+    let (vm, template) = match init::template(&init::home_dir(), init::DEFAULT_PHARO) {
         Some(t) => t,
         None => die(2, "not_initialized", "Run `stlive init` once first.".into(), pretty),
     };
