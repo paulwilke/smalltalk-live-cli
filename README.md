@@ -21,7 +21,9 @@ Normally an agent edits files, restarts the program and reads a log. Smalltalk c
 | fix a method in the running app | `stlive method compile Cart --file total.st` |
 | prove the fix, not just hope | `stlive debug rerun dbg-…` (runs the original operation again with the new code) |
 | run tests and see failures *grouped by cause* | `stlive test run MyApp-Tests` |
-| get the fix into my git repo | `stlive save --package MyApp --dir src` |
+| get the fix into my git repo | `stlive save --package MyApp --dir src --verify` |
+| check that image and files agree | `stlive drift --all --dir src` |
+| run the finished program headless from the sources | `stlive run --load src --eval 'MyApp run' -- arg` |
 | develop a window (Spec2/Morphic) while it is open | `stlive start --gui`, then `stlive eval --ui …` |
 | see the window – and click it – without leaving the shell | `stlive ui screenshot`, `stlive ui press Increment` |
 
@@ -138,6 +140,7 @@ An image started by an older version of this tool (or any server that speaks the
 | Tests | `test list`, `test run` (per test isolation, failures **grouped by cause**, one session kept per group) |
 | Objects | `obj show\|items\|var\|text\|compare\|referrers\|graph\|release` – paged, with stable references; `graph` marks cycles and shared nodes |
 | Debugging | `debug list\|inspect\|frames\|frame\|locals\|receiver\|eval\|resume\|restart\|return\|rerun\|terminate` |
+| Run / verify | `run --load src --eval … -- args` (fresh image, clean stdout, exit codes), `drift`, `save --verify` |
 | Persist | `save --package X \| --all --dir src [--dry-run]` |
 
 Full reference: [docs/commands.md](docs/commands.md). How it works: [docs/architecture.md](docs/architecture.md).

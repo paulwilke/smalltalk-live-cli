@@ -30,12 +30,13 @@ const SOURCES: &[(&str, &str)] = &[
     ("StLive/StLiveJob.class.st", include_str!("../smalltalk/src/StLive/StLiveJob.class.st")),
     ("StLive/StLiveServer.class.st", include_str!("../smalltalk/src/StLive/StLiveServer.class.st")),
     ("StLive/StLiveSession.class.st", include_str!("../smalltalk/src/StLive/StLiveSession.class.st")),
+    ("StLive/StLiveRun.class.st", include_str!("../smalltalk/src/StLive/StLiveRun.class.st")),
     ("StLive/StLiveTranscriptTee.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptTee.class.st")),
     ("StLive/StLiveTranscriptProxy.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptProxy.class.st")),
 ];
 
 /// Startup script run by every `start`: upgrades the server inside the image if it was built from other sources, then starts it.
-pub const SERVE_ST: &str = r#"| env hash current |
+const UPGRADE_ST: &str = r#"| env hash current run code |
 env := Smalltalk os environment.
 hash := env at: 'STLIVE_SOURCES_HASH' ifAbsent: [ nil ].
 current := (Smalltalk globals at: #StLiveServer ifAbsent: [ nil ]) ifNotNil: [ :c | (c respondsTo: #installedHash) ifTrue: [ c installedHash ] ].
@@ -44,7 +45,32 @@ current := (Smalltalk globals at: #StLiveServer ifAbsent: [ nil ]) ifNotNil: [ :
 	(Smalltalk globals at: #StLiveServer) installedHash: hash ]
 		on: Error
 		do: [ :e | Stdio stdout nextPutAll: 'stlive: could not upgrade the server in this image: ' , e messageText asString; lf; flush ] ].
-(Smalltalk globals at: #StLiveServer) startFromEnvironment.
+"#;
+
+/// Startup script run by every `start`: upgrade (if needed), then start the server.
+pub fn serve_st() -> String {
+    format!("{}(Smalltalk globals at: #StLiveServer) startFromEnvironment.\n", UPGRADE_ST)
+}
+
+/// Script of `stlive run`: upgrade (if needed), load sources, evaluate, write results to files.
+pub fn run_st() -> String {
+    format!("{}{}", UPGRADE_ST, RUN_BODY_ST)
+}
+
+const RUN_BODY_ST: &str = r#"run := Smalltalk globals at: #StLiveRun.
+run beginIn: (env at: 'STLIVE_RUN_DIR').
+[ [
+	| packages |
+	packages := (STON fromString: (env at: 'STLIVE_RUN_PACKAGES' ifAbsent: [ '[]' ])) asArray.
+	(STON fromString: (env at: 'STLIVE_RUN_LOAD' ifAbsent: [ '[]' ])) do: [ :dir | run loadTonelFrom: dir packages: packages ].
+	(env at: 'STLIVE_RUN_PREPARE' ifAbsent: [ nil ]) ifNotNil: [ :file | Smalltalk compiler evaluate: file asFileReference contents ].
+	code := (env at: 'STLIVE_RUN_FILE' ifAbsent: [ nil ])
+		ifNotNil: [ :file | file asFileReference contents ]
+		ifNil: [ env at: 'STLIVE_RUN_EXPR' ].
+	run result: (Smalltalk compiler evaluate: code) ]
+	on: Error
+	do: [ :e | run failed: e ] ] ensure: [ run finish ].
+Smalltalk exit: 0.
 "#;
 
 /// FNV-1a hash (hex) of everything that ends up inside the image: the Smalltalk sources and the scripts.
@@ -61,7 +87,8 @@ pub fn sources_hash() -> String {
         feed(content);
     }
     feed(PREPARE_ST);
-    feed(SERVE_ST);
+    feed(&serve_st());
+    feed(&run_st());
     format!("{:016x}", h)
 }
 
@@ -145,10 +172,17 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
             .arg(home.join("prepare.st"))
             .env("STLIVE_SRC", &src)
             .env("STLIVE_SOURCES_HASH", sources_hash())
-            .stdout(Stdio::null())
+            .stdout(std::fs::File::create(home.join("prepare.log")).map(Stdio::from).unwrap_or_else(|_| Stdio::null()))
             .stderr(Stdio::null()),
         "image preparation",
     )?;
+    // A syntax error in the sources must not produce an "initialised" image without a working server.
+    if let Ok(log) = std::fs::read_to_string(home.join("prepare.log")) {
+        let bad: Vec<&str> = log.lines().filter(|l| l.contains("Syntax Error") || l.contains("Missing opener") || l.contains("did not understand") || l.contains("Error:") || l.contains("Undeclared")).take(5).collect();
+        if !bad.is_empty() {
+            return Err(format!("loading the StLive package into the image reported problems (see {}):\n{}", home.join("prepare.log").display(), bad.join("\n")));
+        }
+    }
 
     // 4. Remember
     let cfg = json!({"vm": vm, "image": image});

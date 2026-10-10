@@ -198,6 +198,10 @@ StLiveCommands >> sessionError: aSession [
 	aSession exception ifNotNil: [ :ex | d at: 'exception' put: (self summary: ex) ].
 	aSession continuedFrom ifNotNil: [ :c | d at: 'continued_from' put: c ].
 	(self recursionOf: aSession) ifNotNil: [ :r | d at: 'recursion' put: r ].
+	(aSession exception isKindOf: MessageNotUnderstood) ifTrue: [
+		[ | sugg |
+		sugg := self suggestionsFor: aSession exception message selector receiver: aSession exception receiver.
+		sugg isEmpty ifFalse: [ d at: 'did_you_mean' put: sugg ] ] on: Error do: [ :e | nil ] ].
 	^ d
 ]
 
@@ -1453,4 +1457,72 @@ StLiveCommands >> cmdUiPress: args [
 		result at: 'pressed' put: target.
 		result at: 'window' put: ([ found last label asString ] on: Error do: [ :e | '' ]) ].
 	^ self finishEval: response args: args
+]
+
+{ #category : 'code' }
+StLiveCommands >> normalizedSourceOf: aMethod [
+	"LF, no trailing blanks per line, no trailing blank lines: the form used to compare image and Tonel files."
+	| lines |
+	lines := (self canonicalSourceOf: aMethod) lines collect: [ :l | l trimRight ].
+	^ (lines inject: '' into: [ :a :l | a isEmpty ifTrue: [ l ] ifFalse: [ a , String lf , l ] ]) trimRight
+]
+
+{ #category : 'code' }
+StLiveCommands >> cmdPackageMethods: args [
+	"Every class and method of a package as the image has it (extension methods included), for `stlive drift`."
+	| name pkg methods classes seen |
+	name := self need: 'package' in: args.
+	pkg := PackageOrganizer default packageNamed: name ifAbsent: [ self fail: 'unknown_package' message: 'No package ' , name printString ].
+	classes := pkg definedClasses collect: [ :c | c name ].
+	methods := OrderedCollection new.
+	seen := IdentitySet new.
+	pkg definedClasses do: [ :c |
+		{ c. c class } do: [ :b |
+			b methods do: [ :m |
+				((m package name = name) and: [ (seen includes: m) not ]) ifTrue: [ seen add: m. methods add: m ] ] ] ].
+	pkg extensionMethods do: [ :m | (seen includes: m) ifFalse: [ seen add: m. methods add: m ] ].
+	^ self ok: (self m: {
+		'package' -> name.
+		'classes' -> classes asArray.
+		'methods' -> (methods collect: [ :m |
+			self m: {
+				'class' -> m methodClass instanceSide name.
+				'side' -> (m methodClass isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]).
+				'selector' -> m selector.
+				'source' -> (self normalizedSourceOf: m) } ]) asArray })
+]
+
+{ #category : 'suggestions' }
+StLiveCommands >> levenshtein: a to: b [
+	| prev cur |
+	prev := (0 to: b size) asArray.
+	1 to: a size do: [ :i |
+		cur := Array new: b size + 1.
+		cur at: 1 put: i.
+		1 to: b size do: [ :j |
+			cur at: j + 1 put: (((prev at: j + 1) + 1 min: (cur at: j) + 1) min: (prev at: j) + ((a at: i) = (b at: j) ifTrue: [ 0 ] ifFalse: [ 1 ])) ].
+		prev := cur ].
+	^ prev last
+]
+
+{ #category : 'suggestions' }
+StLiveCommands >> suggestionsFor: aSelector receiver: aReceiver [
+	"Existing selectors of the receiver that look like the one that was not understood (typos, wrong arity,
+	remembered-but-wrong keyword names): { selector, implemented_in, distance }, best first."
+	| target parts found |
+	target := aSelector asString.
+	parts := aSelector keywords asSet.
+	found := OrderedCollection new.
+	aReceiver class allSelectors do: [ :c |
+		c ~~ aSelector ifTrue: [
+			| d shared |
+			d := self levenshtein: target to: c asString.
+			shared := (c keywords asSet select: [ :k | parts includes: k ]) size.
+			((d <= (2 max: target size // 4)) or: [ shared >= 2 or: [ shared >= 1 and: [ d <= (target size // 2) ] ] ])
+				ifTrue: [ found add: { c. d - (6 * shared). d } ] ] ].
+	^ ((found asSortedCollection: [ :x :y | x second <= y second ]) asArray first: (5 min: found size)) collect: [ :t |
+		self m: {
+			'selector' -> t first.
+			'implemented_in' -> ([ (aReceiver class whichClassIncludesSelector: t first) name ] on: Error do: [ :e | nil ]).
+			'distance' -> t third } ]
 ]

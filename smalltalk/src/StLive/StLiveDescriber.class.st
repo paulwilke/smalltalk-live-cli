@@ -38,7 +38,9 @@ StLiveDescriber >> summary: obj [
 	d at: 'class' put: obj class printString.
 	p := self print: obj limit: 120.
 	d at: 'print' put: p.
-	(p size > 120 or: [ p endsWith: '[..]' ]) ifTrue: [ d at: 'print_truncated' put: true ].
+	(p size > 120 or: [ p endsWith: '[..]' ]) ifTrue: [
+		d at: 'print_truncated' put: true.
+		d at: 'hint' put: ((self isInline: obj) ifTrue: [ 'cut at 120 characters; eval --full gives the whole text' ] ifFalse: [ 'cut at 120 characters; `obj text <ref>` or eval --full gives the whole text' ]) ].
 	(self isInline: obj) ifFalse: [ d at: 'ref' put: (server refFor: obj) ].
 	^ d
 ]

@@ -164,6 +164,47 @@ enum Cmd {
         /// Show what would be written
         #[arg(long)]
         dry_run: bool,
+        /// After writing, compare image and files and fail if they still differ
+        #[arg(long)]
+        verify: bool,
+    },
+    /// One-shot headless run of a program from Tonel sources in a FRESH image; stdout carries only the program's result
+    Run {
+        /// Tonel source directory to load (one folder per package; repeatable)
+        #[arg(long)]
+        load: Vec<PathBuf>,
+        /// Only these packages, in this order (default: every package folder)
+        #[arg(long = "package")]
+        packages: Vec<String>,
+        /// Smalltalk file evaluated after loading (e.g. to load a Metacello dependency)
+        #[arg(long)]
+        prepare: Option<PathBuf>,
+        /// Expression to evaluate; its value is printed (Strings raw, others printString)
+        #[arg(long)]
+        eval: Option<String>,
+        /// Smalltalk file to evaluate instead of --eval
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Seconds before the run is killed (exit code 124)
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+        /// Keep the work directory (image, logs) for inspection
+        #[arg(long)]
+        keep: bool,
+        /// Arguments for the program: read them with `StLiveRun arguments`
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Compare the image with the Tonel files of a package: methods or classes that exist only on one side, or differ
+    Drift {
+        /// Package to compare (or --all for every package folder in --dir that is loaded in the image)
+        #[arg(long)]
+        package: Option<String>,
+        #[arg(long)]
+        all: bool,
+        /// Source directory with one folder per package
+        #[arg(long)]
+        dir: PathBuf,
     },
     /// Load a Metacello baseline; reports the packages that appeared
     Load {
@@ -575,6 +616,15 @@ fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, summary:
         "mode": pick(&["mode"]),
         "error_code": if resp["ok"] == json!(true) { Value::Null } else { pick(&["code", "type"]) },
     });
+    let mut line = line;
+    if cmd == "test.run" && resp["ok"] == json!(true) {
+        let groups = r["groups"].as_array().cloned().unwrap_or_default();
+        line["ran"] = r["ran"].clone();
+        line["passed"] = r["passed"].clone();
+        line["failed"] = r["failed"].clone();
+        line["sessions"] = json!(groups.iter().flat_map(|g| g["sessions"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>());
+        line["groups"] = json!(groups.iter().map(|g| json!({"count": g["count"], "type": g["type"], "message": g["message"].as_str().map(|m| m.chars().take(60).collect::<String>()), "frame": g["first_application_frame"]["label"]})).collect::<Vec<_>>());
+    }
     if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{}", line);
@@ -677,7 +727,7 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool
     }
     let _ = std::fs::write(&cfg_path, json!({"vm": vm, "image": image}).to_string());
     let serve = inst.path("serve.st");
-    let _ = std::fs::write(&serve, init::SERVE_ST);
+    let _ = std::fs::write(&serve, init::serve_st());
     let src_dir = init::write_sources(&init::home_dir()).ok();
     let _ = std::fs::remove_file(inst.path("port.json"));
     let log = std::fs::File::create(inst.path("log")).expect("cannot create log file");
@@ -749,45 +799,6 @@ fn add_diff(resp: &mut Value) {
     }
 }
 
-fn save_changes(inst: &Instance, package: Option<String>, all: bool, dir: &Path, dry_run: bool, pretty: bool) {
-    if package.is_none() && !all {
-        die(2, "missing_argument", "Give --package <Name> or --all. `stlive changes list` shows unsaved_by_package.".into(), pretty);
-    }
-    let args = match &package { Some(p) if !all => json!({"package": p}), _ => json!({}) };
-    let resp = call(inst, "changes.pending", args, Duration::from_secs(30), pretty);
-    if resp["ok"] != json!(true) {
-        emit(&resp, pretty);
-        std::process::exit(1);
-    }
-    let changes: Vec<Value> = resp["result"]["changes"].as_array().cloned().unwrap_or_default();
-    if changes.is_empty() {
-        emit(&json!({"ok": true, "result": {"files": [], "note": "No unsaved changes"}}), pretty);
-        return;
-    }
-    let mut by_pkg: std::collections::BTreeMap<String, Vec<Value>> = Default::default();
-    let mut skipped = Vec::new();
-    for c in changes {
-        match c["package"].as_str() {
-            Some(p) => by_pkg.entry(p.to_string()).or_default().push(c),
-            None => skipped.push(c["index"].clone()),
-        }
-    }
-    let mut files = Vec::new();
-    let mut marked: Vec<u64> = Vec::new();
-    for (pkg, list) in &by_pkg {
-        match save::plan(list, pkg, dir, dry_run) {
-            Ok(plan) => {
-                files.extend(plan.report);
-                marked.extend(plan.marked);
-            }
-            Err(e) => die(1, "save_failed", format!("package {}: {}", pkg, e), pretty),
-        }
-    }
-    if !dry_run {
-        let _ = call(inst, "changes.mark_saved", json!({"indexes": marked}), Duration::from_secs(30), pretty);
-    }
-    emit(&json!({"ok": true, "result": {"dry_run": dry_run, "packages": by_pkg.keys().collect::<Vec<_>>(), "changes": marked.len(), "files": files, "skipped_without_package": skipped}}), pretty);
-}
 
 fn watch_changes(inst: &Instance, interval: u64, pretty: bool) {
     let mut seen: u64 = 0;
@@ -1122,7 +1133,9 @@ fn main() {
         Cmd::Image(ImageCmd::Info) => ("image.info".into(), json!({}), None),
         Cmd::Image(ImageCmd::Export { out, keep_server, force }) => return export_image(&inst, &out, keep_server, force, pretty),
         Cmd::Image(ImageCmd::Clone { name, start: do_start }) => return clone_image(&inst, &name, do_start, pretty),
-        Cmd::Save { package, all, dir, dry_run } => return save_changes(&inst, package, all, &dir, dry_run, pretty),
+        Cmd::Save { package, all, dir, dry_run, verify } => return save_changes(&inst, package, all, &dir, dry_run, verify, pretty),
+        Cmd::Run { load, packages, prepare, eval, file, timeout, keep, args } => return run_program(&inst, load, packages, prepare, eval, file, timeout, keep, args, pretty),
+        Cmd::Drift { package, all, dir } => return drift_cmd(&inst, package, all, &dir, pretty),
         Cmd::Load { baseline, repository, groups, timeout } => {
             let mut m = Map::new();
             m.insert("name".into(), baseline.into());
@@ -1221,4 +1234,197 @@ fn export_image(inst: &Instance, out: &Path, keep_server: bool, force: bool, pre
     emit(&json!({"ok": ok, "result": {"image": abs, "changes": abs.with_extension("changes"), "sources": sources, "server_removed": !keep_server,
         "note": "Start it with your VM and your own startup script; this image has no stlive port."}}), pretty);
     if !ok { std::process::exit(1); }
+}
+
+/// Package folders (with Tonel files) found below `dir`.
+fn package_folders(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().is_dir())
+                .filter(|e| std::fs::read_dir(e.path()).map(|r| r.flatten().any(|f| f.file_name().to_string_lossy().ends_with(".st"))).unwrap_or(false))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// Drift report per package: what the image has that the files lack and vice versa.
+fn verify_packages(inst: &Instance, packages: &[String], dir: &Path, pretty: bool) -> Vec<Value> {
+    packages
+        .iter()
+        .map(|p| {
+            let r = call(inst, "package.methods", json!({"package": p}), Duration::from_secs(120), pretty);
+            if r["ok"] == json!(true) {
+                save::drift(&r["result"], p, dir)
+            } else if r["error"]["code"] == json!("unknown_package") {
+                json!({"package": p, "ok": true, "note": "folder exists but the package is not loaded in the image; nothing to compare"})
+            } else {
+                json!({"package": p, "ok": false, "error": r["error"]})
+            }
+        })
+        .collect()
+}
+
+fn drift_cmd(inst: &Instance, package: Option<String>, all: bool, dir: &Path, pretty: bool) {
+    let packages = match (package, all) {
+        (Some(p), false) => vec![p],
+        (None, true) => package_folders(dir),
+        _ => die(2, "missing_argument", "Give --package <Name> or --all.".into(), pretty),
+    };
+    let reports = verify_packages(inst, &packages, dir, pretty);
+    let ok = reports.iter().all(|r| r["ok"] == json!(true));
+    emit(&json!({"ok": ok, "result": {"drift": !ok, "packages": reports}}), pretty);
+    if !ok { std::process::exit(1); }
+}
+
+fn save_changes(inst: &Instance, package: Option<String>, all: bool, dir: &Path, dry_run: bool, verify: bool, pretty: bool) {
+    if package.is_none() && !all {
+        die(2, "missing_argument", "Give --package <Name> or --all. `stlive changes list` shows unsaved_by_package.".into(), pretty);
+    }
+    let args = match &package { Some(p) if !all => json!({"package": p}), _ => json!({}) };
+    let resp = call(inst, "changes.pending", args, Duration::from_secs(30), pretty);
+    if resp["ok"] != json!(true) {
+        emit(&resp, pretty);
+        std::process::exit(1);
+    }
+    let changes: Vec<Value> = resp["result"]["changes"].as_array().cloned().unwrap_or_default();
+    let mut by_pkg: std::collections::BTreeMap<String, Vec<Value>> = Default::default();
+    let mut warnings: Vec<Value> = Vec::new();
+    for c in changes {
+        match c["package"].as_str() {
+            Some(p) => by_pkg.entry(p.to_string()).or_default().push(c),
+            None => warnings.push(json!({
+                "change": c["index"], "class": c["class"], "selector": c["selector"],
+                "problem": "the change has no package (class created without one?), so it was NOT written; give the class a package and compile again"})),
+        }
+    }
+    let mut files = Vec::new();
+    let mut marked: Vec<u64> = Vec::new();
+    for (pkg, list) in &by_pkg {
+        match save::plan(list, pkg, dir, dry_run) {
+            Ok(plan) => {
+                files.extend(plan.report);
+                marked.extend(plan.marked);
+            }
+            Err(e) => die(1, "save_failed", format!("package {}: {}", pkg, e), pretty),
+        }
+    }
+    if !dry_run && !marked.is_empty() {
+        let _ = call(inst, "changes.mark_saved", json!({"indexes": marked}), Duration::from_secs(30), pretty);
+    }
+    let mut result = json!({"dry_run": dry_run, "packages": by_pkg.keys().collect::<Vec<_>>(), "changes": marked.len(), "files": files});
+    if marked.is_empty() && warnings.is_empty() {
+        result["note"] = json!("No unsaved changes recorded. Use `stlive drift` to compare the image with the files.");
+    }
+    let mut ok = warnings.is_empty();
+    if !warnings.is_empty() {
+        result["warnings"] = json!(warnings);
+    }
+    if verify && !dry_run {
+        let mut pkgs: Vec<String> = by_pkg.keys().cloned().collect();
+        match (&package, all) {
+            (Some(p), false) => { if !pkgs.contains(p) { pkgs.push(p.clone()); } }
+            _ => { for p in package_folders(dir) { if !pkgs.contains(&p) { pkgs.push(p); } } }
+        }
+        let reports = verify_packages(inst, &pkgs, dir, pretty);
+        if reports.iter().any(|r| r["ok"] != json!(true)) { ok = false; }
+        result["verify"] = json!(reports);
+    }
+    emit(&json!({"ok": ok, "result": result}), pretty);
+    if !ok { std::process::exit(1); }
+}
+
+/// `stlive run`: fresh image, load Tonel sources, evaluate, pass through stdout/stderr/exit code.
+#[allow(clippy::too_many_arguments)]
+fn run_program(inst: &Instance, load: Vec<PathBuf>, packages: Vec<String>, prepare: Option<PathBuf>, eval: Option<String>, file: Option<PathBuf>, timeout: u64, keep: bool, args: Vec<String>, pretty: bool) {
+    if eval.is_none() && file.is_none() {
+        die(2, "missing_argument", "Give --eval '<expression>' or --file <script.st>.".into(), pretty);
+    }
+    let (vm, template) = match init::template(&init::home_dir()) {
+        Some(t) => t,
+        None => die(2, "not_initialized", "Run `stlive init` once first.".into(), pretty),
+    };
+    let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let dir = inst.dir.join(format!("run-{}-{}", std::process::id(), ms));
+    let _ = std::fs::create_dir_all(&inst.dir);
+    if !inst.dir.join(".gitignore").exists() {
+        let _ = std::fs::write(inst.dir.join(".gitignore"), "# created by stlive: local state, never commit\n*\n");
+    }
+    let image = match init::instance_image(&template, &dir, "run") {
+        Ok(i) => i,
+        Err(e) => die(3, "image_copy_failed", e, pretty),
+    };
+    let script = dir.join("run.st");
+    let _ = std::fs::write(&script, init::run_st());
+    let src_dir = init::write_sources(&init::home_dir()).ok();
+    let log = std::fs::File::create(dir.join("vm.log")).expect("cannot create log file");
+    let load_abs: Vec<String> = load.iter().map(|p| abs(p).display().to_string()).collect();
+    let mut cmd = Command::new(&vm);
+    cmd.arg("--headless")
+        .arg(&image)
+        .arg("st")
+        .arg(&script)
+        .arg("--quit")
+        .env("STLIVE_RUN_DIR", &dir)
+        .env("STLIVE_RUN_ARGS", serde_json::to_string(&args).unwrap_or_default())
+        .env("STLIVE_RUN_LOAD", serde_json::to_string(&load_abs).unwrap_or_default())
+        .env("STLIVE_RUN_PACKAGES", serde_json::to_string(&packages).unwrap_or_default())
+        .env("STLIVE_SOURCES_HASH", init::sources_hash())
+        .envs(src_dir.iter().map(|d| ("STLIVE_SRC", d.clone())))
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log);
+    if let Some(p) = &prepare { cmd.env("STLIVE_RUN_PREPARE", abs(p)); }
+    if let Some(f) = &file { cmd.env("STLIVE_RUN_FILE", abs(f)); }
+    if let Some(e) = &eval { cmd.env("STLIVE_RUN_EXPR", e); }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => die(3, "spawn_failed", format!("Cannot start {}: {}", vm.display(), e), pretty),
+    };
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if Instant::now() > deadline {
+            timed_out = true;
+            let _ = child.kill();
+            let _ = child.wait();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = std::fs::read(dir.join("out.txt")).unwrap_or_default();
+    let err = std::fs::read(dir.join("err.txt")).unwrap_or_default();
+    let code_file: Option<i32> = std::fs::read_to_string(dir.join("exit.txt")).ok().and_then(|t| t.trim().parse().ok());
+    {
+        let mut so = std::io::stdout();
+        let _ = so.write_all(&out);
+        let _ = so.flush();
+        let mut se = std::io::stderr();
+        let _ = se.write_all(&err);
+        if code_file.is_none() && !timed_out {
+            // the image did not get to write its result: show why
+            let vmlog = std::fs::read_to_string(dir.join("vm.log")).unwrap_or_default();
+            let tail: Vec<&str> = vmlog.lines().filter(|l| !l.trim().is_empty()).collect();
+            let _ = writeln!(se, "stlive run: the image ended without a result; last lines of {}:", dir.join("vm.log").display());
+            for l in tail.iter().rev().take(12).rev() { let _ = writeln!(se, "  {}", l); }
+        }
+        if timed_out { let _ = writeln!(se, "stlive run: timed out after {} s", timeout); }
+        let _ = se.flush();
+    }
+    let code = if timed_out { 124 } else { code_file.unwrap_or(70) };
+    if !keep && (code_file.is_some() || timed_out) {
+        let _ = std::fs::remove_dir_all(&dir);
+    } else if keep || code_file.is_none() {
+        eprintln!("stlive run: work directory kept: {}", dir.display());
+    }
+    std::process::exit(code);
 }

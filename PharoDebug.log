@@ -1,0 +1,1225 @@
+
+===============================================================================
+Notice: Errors in script loaded from /tmp/x/h2/prepare.st
+===============================================================================
+THERE_BE_DRAGONS_HERE
+OCCodeError:OCSyntaxErrorNotice StLiveCommands>>#cmdPackageMethods: 1087:Missing opener for closer: ]->'source' -> (self normalizedSourceOf: m) ]
+10 October 2026 6:09:06.655737 am
+
+VM: Mac OS - arm64 - 1000 - CoInterpreter VMMaker-tonel.1 uuid: 80e43a52-2018-0e00-bce4-820906d86bc4 Sep 18 2026
+StackToRegisterMappingCogit VMMaker-tonel.1 uuid: 80e43a52-2018-0e00-bce4-820906d86bc4 Sep 18 2026
+v10.3.11+0.a585304b1 - Commit: a585304b1 - Date: 2026-09-16 09:19:54 +0200
+
+Image: Pharo13.1.0SNAPSHOT [Build information: Pharo-13.1.0+SNAPSHOT.build.749.sha.d7c6f761d5445e8b04a0aa5137e0d546ad9bcd89 (64 Bit)]
+
+OCSyntaxErrorNotice(OCNotice)>>signalError
+	Receiver: OCSyntaxErrorNotice(1087:Missing opener for closer: ])
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		messageText: 	nil
+		node: 	OCUnfinishedStatementErrorNode('source' -> (self normalizedSourceOf: [..]
+
+
+OpalCompiler>>checkNotice:
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		aNotice: 	OCSyntaxErrorNotice(1087:Missing opener for closer: ])
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+[ :n |
+			| check |
+			check := self checkNotice: n.
+			check ifNil: [ ^ ast ].
+			check ifFalse: [
+				ast := nil.
+				^ self failBlock ifNotNil: [ :block | block cull: n ] ifNil: [ nil ].
+				] ] in OpalCompiler>>parse
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		parser: 	an OCParser
+		n: 	OCSyntaxErrorNotice(1087:Missing opener for closer: ])
+		check: 	nil
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+OrderedCollection>>do:
+	Receiver: an OrderedCollection(OCSyntaxErrorNotice(1087:Missing opener for closer: ]) OCSyntaxEr[..]
+	Arguments and temporary variables: 
+		aBlock: 	[ :n |
+			| check |
+			check := self checkNotice: n.
+			check ifNil[..]
+		index: 	1
+	Receiver's instance variables: 
+		array: 	an Array(OCSyntaxErrorNotice(1087:Missing opener for closer: ]) OCSy[..]
+		firstIndex: 	1
+		lastIndex: 	8
+
+
+OpalCompiler>>parse
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		parser: 	an OCParser
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+OpalCompiler>>compile
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		result: 	nil
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+OpalCompiler>>install
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		class: 	StLiveCommands
+		method: 	nil
+		logSource: 	nil
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+OpalCompiler>>install:
+	Receiver: an OpalCompiler
+	Arguments and temporary variables: 
+		aSource: 	'cmdPackageMethods: args
+	"Every class and method of a package as [..]
+	Receiver's instance variables: 
+		ast: 	cmdPackageMethods: args
+	"Every class and method of a package as the i[..]
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		compilationContext: 	an OCCompilationContext
+		compilationContextClass: 	nil
+		permitFaulty: 	false
+		permitUndeclared: 	true
+		failBlock: 	nil
+		logged: 	nil
+		changeStamp: 	nil
+		protocol: 	#code
+		requestor: 	nil
+		priorMethod: 	nil
+
+
+MCMethodDefinition>>loadInEnvironment:
+	Receiver: a MCMethodDefinition(StLiveCommands>>#cmdPackageMethods:)
+	Arguments and temporary variables: 
+		anEnvironment: 	nil
+		method: 	nil
+	Receiver's instance variables: 
+		classIsMeta: 	false
+		source: 	'cmdPackageMethods: args
+	"Every class and method of a package as t[..]
+		category: 	#code
+		selector: 	#cmdPackageMethods:
+		className: 	#StLiveCommands
+		timeStamp: 	nil
+		sortKey: 	#'StLiveCommands.nonmeta.cmdPackageMethods:'
+
+
+[ :definition | definition loadInEnvironment: targetEnvironment ] in [
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefinition ]
+			thenDo: [ :definition | definition loadInEnvironment: targetEnvironment ] ] in MCPackageLoader>>basicLoadDefinitions
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+		definition: 	a MCMethodDefinition(StLiveCommands>>#cmdPackageMethods:)
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+OrderedCollection(SequenceableCollection)>>select:thenDo:
+	Receiver: an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) a MCMethodDefinition(S[..]
+	Arguments and temporary variables: 
+		selectBock: 	[ :aDefinition | aDefinition isMethodDefinition ]
+		aBlock: 	[ :definition | definition loadInEnvironment: targetEnvironment ]
+		each: 	a MCMethodDefinition(StLiveCommands>>#cmdPackageMethods:)
+		index: 	75
+	Receiver's instance variables: 
+		array: 	an Array(a MCClassDefinition(StLiveTranscriptProxy) a MCMethodDefini[..]
+		firstIndex: 	1
+		lastIndex: 	276
+
+
+[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefinition ]
+			thenDo: [ :definition | definition loadInEnvironment: targetEnvironment ] ] in MCPackageLoader>>basicLoadDefinitions
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+FullBlockClosure(BlockClosure)>>ensure:
+	Receiver: [
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefinition ]
+			thenDo: [..]
+	Arguments and temporary variables: 
+		aBlock: 	[ 
+		suspendedCount := suspendedCount - 1 ]
+		handler: 	[ 
+		suspendedCount := suspendedCount - 1 ]
+		complete: 	nil
+		returnValue: 	nil
+	Receiver's instance variables: 
+		outerContext: 	MCPackageLoader>>basicLoadDefinitions
+		compiledBlock: 	a CompiledBlock: [
+		additions
+			select: [ :aDefinition | a[..]
+		numArgs: 	0
+		receiver: 	a MCPackageLoader
+
+
+SystemAnnouncer(Announcer)>>suspendAllWhile:
+	Receiver: a SystemAnnouncer
+	Arguments and temporary variables: 
+		aBlock: 	[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefin[..]
+	Receiver's instance variables: 
+		registry: 	a SubscriptionRegistry
+		preventedAnnouncements: 	an AnnouncementSet()
+		storedAnnouncements: 	an OrderedCollection(a ProtocolAdded a MethodAdded a P[..]
+		suspendedCount: 	1
+
+
+[
+		self suspendAllWhile: aBlock.
+		^ storedAnnouncements.
+	] in SystemAnnouncer(Announcer)>>suspendAllWhileStoring:
+	Receiver: a SystemAnnouncer
+	Arguments and temporary variables: 
+		aBlock: 	[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefin[..]
+		reentring: 	false
+	Receiver's instance variables: 
+		registry: 	a SubscriptionRegistry
+		preventedAnnouncements: 	an AnnouncementSet()
+		storedAnnouncements: 	an OrderedCollection(a ProtocolAdded a MethodAdded a P[..]
+		suspendedCount: 	1
+
+
+FullBlockClosure(BlockClosure)>>ensure:
+	Receiver: [
+		self suspendAllWhile: aBlock.
+		^ storedAnnouncements.
+	]
+	Arguments and temporary variables: 
+		aBlock: 	[
+		reentring ifFalse:[
+			storedAnnouncements := nil.
+		]
+	]
+		handler: 	[
+		reentring ifFalse:[
+			storedAnnouncements := nil.
+		]
+	]
+		complete: 	nil
+		returnValue: 	nil
+	Receiver's instance variables: 
+		outerContext: 	SystemAnnouncer(Announcer)>>suspendAllWhileStoring:
+		compiledBlock: 	a CompiledBlock: [
+		self suspendAllWhile: aBlock.
+		^ store[..]
+		numArgs: 	0
+		receiver: 	a SystemAnnouncer
+
+
+SystemAnnouncer(Announcer)>>suspendAllWhileStoring:
+	Receiver: a SystemAnnouncer
+	Arguments and temporary variables: 
+		aBlock: 	[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefin[..]
+		reentring: 	false
+	Receiver's instance variables: 
+		registry: 	a SubscriptionRegistry
+		preventedAnnouncements: 	an AnnouncementSet()
+		storedAnnouncements: 	an OrderedCollection(a ProtocolAdded a MethodAdded a P[..]
+		suspendedCount: 	1
+
+
+SystemAnnouncer(Announcer)>>delayAnnouncementsAfter:
+	Receiver: a SystemAnnouncer
+	Arguments and temporary variables: 
+		aBlock: 	[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefin[..]
+	Receiver's instance variables: 
+		registry: 	a SubscriptionRegistry
+		preventedAnnouncements: 	an AnnouncementSet()
+		storedAnnouncements: 	an OrderedCollection(a ProtocolAdded a MethodAdded a P[..]
+		suspendedCount: 	1
+
+
+MCPackageLoader>>basicLoadDefinitions
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+[ self basicLoadDefinitions ] in MCPackageLoader>>basicLoad
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+[ aBlock value ] in SourceFileArray>>deferFlushDuring:
+	Receiver: a SourceFileArray
+	Arguments and temporary variables: 
+		aBlock: 	[ self basicLoadDefinitions ]
+	Receiver's instance variables: 
+		files: 	an Array(SourceFile(/private/tmp/x/h2/pharo/Pharo13.1-64bit-d7c6f76.[..]
+		readOnlyQueue: 	SharedQueue with 1 items
+		flushChanges: 	false
+
+
+FullBlockClosure(BlockClosure)>>ensure:
+	Receiver: [ aBlock value ]
+	Arguments and temporary variables: 
+		aBlock: 	[
+		flushChanges := true.
+		self flushChangesFile ]
+		handler: 	[
+		flushChanges := true.
+		self flushChangesFile ]
+		complete: 	nil
+		returnValue: 	nil
+	Receiver's instance variables: 
+		outerContext: 	SourceFileArray>>deferFlushDuring:
+		compiledBlock: 	a CompiledBlock: [ aBlock value ]
+		numArgs: 	0
+		receiver: 	a SourceFileArray
+
+
+SourceFileArray>>deferFlushDuring:
+	Receiver: a SourceFileArray
+	Arguments and temporary variables: 
+		aBlock: 	[ self basicLoadDefinitions ]
+	Receiver's instance variables: 
+		files: 	an Array(SourceFile(/private/tmp/x/h2/pharo/Pharo13.1-64bit-d7c6f76.[..]
+		readOnlyQueue: 	SharedQueue with 1 items
+		flushChanges: 	false
+
+
+MCPackageLoader>>basicLoad
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+MCPackageLoader>>load
+	Receiver: a MCPackageLoader
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		requirements: 	#()
+		unloadableDefinitions: 	a SortedCollection()
+		obsoletions: 	a Dictionary()
+		additions: 	an OrderedCollection(a MCClassDefinition(StLiveTranscriptProxy) [..]
+		removals: 	an OrderedCollection()
+		provisions: 	a Set(#StBreadcrumbPresenterTest #RSHorizontalLeftRightControll[..]
+		targetEnvironment: 	nil
+
+
+MCVersionLoader>>basicLoad
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		loader: 	a MCPackageLoader
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+[ self basicLoad ] in MCVersionLoader>>loadWithNameLike:
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		aString: 	'StLive-tonel.1'
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+[ aBlock value ] in MCVersionLoader>>announceLoad:do:
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		aString: 	'StLive-tonel.1'
+		aBlock: 	[ self basicLoad ]
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+FullBlockClosure(BlockClosure)>>ensure:
+	Receiver: [ aBlock value ]
+	Arguments and temporary variables: 
+		aBlock: 	[ self announceLoadStop: aString ]
+		handler: 	[ self announceLoadStop: aString ]
+		complete: 	nil
+		returnValue: 	nil
+	Receiver's instance variables: 
+		outerContext: 	MCVersionLoader>>announceLoad:do:
+		compiledBlock: 	a CompiledBlock: [ aBlock value ]
+		numArgs: 	0
+		receiver: 	a MCVersionLoader
+
+
+MCVersionLoader>>announceLoad:do:
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		aString: 	'StLive-tonel.1'
+		aBlock: 	[ self basicLoad ]
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+MCVersionLoader>>loadWithNameLike:
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		aString: 	'StLive-tonel.1'
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+[
+	self ensurePackage: version package.
+	self loadWithNameLike: version info name ] in MCVersionLoader>>load
+	Receiver: a MCVersionLoader
+	Arguments and temporary variables: 
+		version: 	a MCVersion(a MCVersionInfo(StLive-tonel.1))
+	Receiver's instance variables: 
+		versions: 	an OrderedCollection(a MCVersion(a MCVersionInfo(StLive-tonel.1)))
+
+
+FullBlockClosure(BlockClosure)>>cull:
+	Receiver: [
+	self ensurePackage: version package.
+	self loadWithNameLike: version info name ]
+	Arguments and temporary variables: 
+		anArg: 	a Job
+	Receiver's instance variables: 
+		outerContext: 	MCVersionLoader>>load
+		compiledBlock: 	a CompiledBlock: [
+	self ensurePackage: version package.
+	se[..]
+		numArgs: 	0
+		receiver: 	a MCVersionLoader
+
+
+[ ^ block cull: self ] in [ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+	Receiver: a Job
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		block: 	[
+	self ensurePackage: version package.
+	self loadWithNameLike: vers[..]
+		currentValue: 	0
+		min: 	0
+		max: 	100
+		title: 	'Loading StLive-tonel.1'
+		children: 	an OrderedCollection()
+		isRunning: 	true
+		parent: 	a Job
+		process: 	a Process in nil
+		owner: 	a MCVersionLoader
+		announcer: 	nil
+		interruptBlock: 	[ process debug ]
+
+
+[ activeProcess
+			psValueAt: index
+			put: anObject.
+		aBlock value ] in CurrentJob(DynamicVariable)>>value:during:
+	Receiver: a CurrentJob
+	Arguments and temporary variables: 
+		anObject: 	a Job
+		aBlock: 	[ ^ block cull: self ]
+		activeProcess: 	a Process in nil
+		oldValue: 	a Job
+	Receiver's instance variables: 
+		index: 	2
+
+
+FullBlockClosure(BlockClosure)>>ensure:
+	Receiver: [ activeProcess
+			psValueAt: index
+			put: anObject.
+		aBlock value ]
+	Arguments and temporary variables: 
+		aBlock: 	[
+			activeProcess
+				psValueAt: index
+				put: oldValue ]
+		handler: 	[
+			activeProcess
+				psValueAt: index
+				put: oldValue ]
+		complete: 	nil
+		returnValue: 	nil
+	Receiver's instance variables: 
+		outerContext: 	CurrentJob(DynamicVariable)>>value:during:
+		compiledBlock: 	a CompiledBlock: [ activeProcess
+			psValueAt: index
+			put:[..]
+		numArgs: 	0
+		receiver: 	a CurrentJob
+
+
+CurrentJob(DynamicVariable)>>value:during:
+	Receiver: a CurrentJob
+	Arguments and temporary variables: 
+		anObject: 	a Job
+		aBlock: 	[ ^ block cull: self ]
+		activeProcess: 	a Process in nil
+		oldValue: 	a Job
+	Receiver's instance variables: 
+		index: 	2
+
+
+CurrentJob class(DynamicVariable class)>>value:during:
+	Receiver: CurrentJob
+	Arguments and temporary variables: 
+		anObject: 	a Job
+		aBlock: 	[ ^ block cull: self ]
+	Receiver's instance variables: 
+		superclass: 	DynamicVariable
+		methodDict: 	a MethodDictionary()
+		format: 	65537
+		layout: 	a FixedLayout
+		protocols: 	#()
+		subclasses: 	nil
+		name: 	#CurrentJob
+		classPool: 	nil
+		sharedPools: 	nil
+		environment: 	a SystemEnvironment(lots of globals)
+		commentSourcePointer: 	12827630
+		packageTag: 	a PackageTag(Base)
+		soleInstance: 	a CurrentJob
+
+
+[ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+	Receiver: a Job
+	Arguments and temporary variables: 
+x
+	Receiver's instance variables: 
+		block: 	[
+	self ensurePackage: version package.
+	self loadWithNameLike: vers[..]
+		currentValue: 	0
+		min: 	0
+		max: 	100
+		title: 	'Loading StLive-tonel.1'
+		children: 	an OrderedCollection()
+		isRunning: 	true
+		parent: 	a Job
+		process: 	a Process in nil
+		owner: 	a MCVersionLoader
+		announcer: 	nil
+		interruptBlock: 	[ process debug ]
+
+
+
+--- The full stack ---
+OCSyntaxErrorNotice(OCNotice)>>signalError
+OpalCompiler>>checkNotice:
+[ :n |
+			| check |
+			check := self checkNotice: n.
+			check ifNil: [ ^ ast ].
+			check ifFalse: [
+				ast := nil.
+				^ self failBlock ifNotNil: [ :block | block cull: n ] ifNil: [ nil ].
+				] ] in OpalCompiler>>parse
+OrderedCollection>>do:
+OpalCompiler>>parse
+OpalCompiler>>compile
+OpalCompiler>>install
+OpalCompiler>>install:
+MCMethodDefinition>>loadInEnvironment:
+[ :definition | definition loadInEnvironment: targetEnvironment ] in [
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefinition ]
+			thenDo: [ :definition | definition loadInEnvironment: targetEnvironment ] ] in MCPackageLoader>>basicLoadDefinitions
+OrderedCollection(SequenceableCollection)>>select:thenDo:
+[
+		additions
+			select: [ :aDefinition | aDefinition isMethodDefinition ]
+			thenDo: [ :definition | definition loadInEnvironment: targetEnvironment ] ] in MCPackageLoader>>basicLoadDefinitions
+FullBlockClosure(BlockClosure)>>ensure:
+SystemAnnouncer(Announcer)>>suspendAllWhile:
+[
+		self suspendAllWhile: aBlock.
+		^ storedAnnouncements.
+	] in SystemAnnouncer(Announcer)>>suspendAllWhileStoring:
+FullBlockClosure(BlockClosure)>>ensure:
+SystemAnnouncer(Announcer)>>suspendAllWhileStoring:
+SystemAnnouncer(Announcer)>>delayAnnouncementsAfter:
+MCPackageLoader>>basicLoadDefinitions
+[ self basicLoadDefinitions ] in MCPackageLoader>>basicLoad
+[ aBlock value ] in SourceFileArray>>deferFlushDuring:
+FullBlockClosure(BlockClosure)>>ensure:
+SourceFileArray>>deferFlushDuring:
+MCPackageLoader>>basicLoad
+MCPackageLoader>>load
+MCVersionLoader>>basicLoad
+[ self basicLoad ] in MCVersionLoader>>loadWithNameLike:
+[ aBlock value ] in MCVersionLoader>>announceLoad:do:
+FullBlockClosure(BlockClosure)>>ensure:
+MCVersionLoader>>announceLoad:do:
+MCVersionLoader>>loadWithNameLike:
+[
+	self ensurePackage: version package.
+	self loadWithNameLike: version info name ] in MCVersionLoader>>load
+FullBlockClosure(BlockClosure)>>cull:
+[ ^ block cull: self ] in [ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+[ activeProcess
+			psValueAt: index
+			put: anObject.
+		aBlock value ] in CurrentJob(DynamicVariable)>>value:during:
+FullBlockClosure(BlockClosure)>>ensure:
+CurrentJob(DynamicVariable)>>value:during:
+CurrentJob class(DynamicVariable class)>>value:during:
+[ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+ - - - - - - - - - - - - - - -
+			- - - - - - - - - - - - - - - - - -
+FullBlockClosure(BlockClosure)>>ensure:
+Job>>run
+MCVersionLoader>>load
+MetacelloMonticelloLoader>>loadAtomicPackageDirectives:
+MetacelloMonticelloLoader>>loadPackageDirective:
+MetacelloLoadTarget>>visitPackageLoadDirective:
+MetacelloPackageLoadDirective>>acceptVisitor:
+[ :dir |
+		dir acceptVisitor: self ] in MetacelloLoadTarget>>visitLinearLoadDirective:
+OrderedCollection>>do:
+MetacelloLoadTarget>>visitLinearLoadDirective:
+MetacelloLinearLoadDirective>>acceptVisitor:
+MetacelloVersion>>loadRequiredFromArray:withEngine:
+[
+		  self loadRequiredFromArray: anArray withEngine: anEngine ] in MetacelloVersion>>doLoadRequiredFromArray:withEngine:
+[
+			| result |
+			result := aBlock value.
+
+			MetacelloNotification signal:
+				'...finished ' , self versionNumber printString.
+			^ result ] in [
+	MetacelloPlatform current
+		do: [
+			| result |
+			result := aBlock value.
+
+			MetacelloNotification signal:
+				'...finished ' , self versionNumber printString.
+			^ result ]
+		displaying: aLabel , displayString ] in MetacelloVersion>>doWithProgress:label:silently:
+[ :bar |
+		bar value: 1.
+		aBlock value.
+		bar value: 2 ] in IceMetacelloPharoPlatform(MetacelloPlatform)>>do:displaying:
+FullBlockClosure(BlockClosure)>>cull:
+[ ^ block cull: self ] in [ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+[ activeProcess
+			psValueAt: index
+			put: anObject.
+		aBlock value ] in CurrentJob(DynamicVariable)>>value:during:
+FullBlockClosure(BlockClosure)>>ensure:
+CurrentJob(DynamicVariable)>>value:during:
+CurrentJob class(DynamicVariable class)>>value:during:
+[ self prepareForRunning.
+	  CurrentJob 
+		value: self 
+		during: [ ^ block cull: self ] ] in Job>>run
+FullBlockClosure(BlockClosure)>>ensure:
+Job>>run
+ByteString(String)>>displayProgressFrom:to:during:
+IceMetacelloPharoPlatform(MetacelloPlatform)>>do:displaying:
+[
+	MetacelloPlatform current
+		do: [
+			| result |
+			result := aBlock value.
+
+			MetacelloNotification signal:
+				'...finished ' , self versionNumber printString.
+			^ result ]
+		displaying: aLabel , displayString ] in MetacelloVersion>>doWithProgress:label:silently:
+FullBlockClosure(BlockClosure)>>ensure:
+MetacelloVersion>>doWithProgress:label:silently:
+MetacelloVersion>>doLoadRequiredFromArray:withEngine:
+[ :versionSpec :requiredArray :projectSpec |
+			| result |
+			result := versionSpec
+				          doLoadRequiredFromArray: requiredArray
+				          withEngine: self.
+			self root: result.
+			MetacelloProjectRegistration
+				registrationForProjectSpec: projectSpec
+				ifAbsent: [ :new |
+					new
+						loadedInImage: true;
+						registerProject ]
+				ifPresent: [ :existing :new |
+					existing copyOnWrite: [ :existingCopy |
+						existingCopy
+							loadedInImage: true;
+							merge: new ] ] ] in MetacelloScriptEngine>>load:onProjectDownGrade:onProjectUpgrade:
+[
+				| versionSpec projectSpec requiredArray |
+				self setDefaultsAndValidateProjectSpec.
+				[
+				projectSpec := (self lookupProjectSpecFor:
+					                self projectReferenceSpec) copy ]
+					on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+					do: [ :notification |
+						notification
+							handleOnDownGrade: onDownGradeBlock
+							onUpgrade: onUpgradeBlock ].
+
+				projectSpec loads: required.
+				projectSpec ensureProjectLoadedWithEngine: self.
+				versionSpec := projectSpec project version:
+					               projectSpec versionString.
+				requiredArray := projectSpec loadListForVersion: versionSpec.
+				self root:
+					(aBlock
+						 value: versionSpec
+						 value: requiredArray
+						 value: projectSpec) ] in [
+			self handleNotificationsForAction: [
+				| versionSpec projectSpec requiredArray |
+				self setDefaultsAndValidateProjectSpec.
+				[
+				projectSpec := (self lookupProjectSpecFor:
+					                self projectReferenceSpec) copy ]
+					on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+					do: [ :notification |
+						notification
+							handleOnDownGrade: onDownGradeBlock
+							onUpgrade: onUpgradeBlock ].
+
+				projectSpec loads: required.
+				projectSpec ensureProjectLoadedWithEngine: self.
+				versionSpec := projectSpec project version:
+					               projectSpec versionString.
+				requiredArray := projectSpec loadListForVersion: versionSpec.
+				self root:
+					(aBlock
+						 value: versionSpec
+						 value: requiredArray
+						 value: projectSpec) ] ] in MetacelloScriptEngine>>do:required:onProjectDownGrade:onProjectUpgrade:commitIfSuccess:
+FullBlockClosure(BlockClosure)>>on:do:
+[
+	actionBlock
+		on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+			, MetacelloAllowConflictingProjectUpgrade
+		do: [ :ex | "option handlers need to be outermost set of handlers ... last line of defense before users are involved"
+			ex handleResolutionFor: self ] ] in [
+	[
+	actionBlock
+		on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+			, MetacelloAllowConflictingProjectUpgrade
+		do: [ :ex | "option handlers need to be outermost set of handlers ... last line of defense before users are involved"
+			ex handleResolutionFor: self ] ]
+		on: MetacelloAllowLockedProjectChange
+		do: [ :ex | "MetacelloAllowLockedProjectChange need to be outermost handler ... since it is signaled from second line of handlers"
+			ex handleResolutionFor: self ] ] in MetacelloScriptEngine>>handleNotificationsForAction:
+FullBlockClosure(BlockClosure)>>on:do:
+[
+	[
+	actionBlock
+		on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+			, MetacelloAllowConflictingProjectUpgrade
+		do: [ :ex | "option handlers need to be outermost set of handlers ... last line of defense before users are involved"
+			ex handleResolutionFor: self ] ]
+		on: MetacelloAllowLockedProjectChange
+		do: [ :ex | "MetacelloAllowLockedProjectChange need to be outermost handler ... since it is signaled from second line of handlers"
+			ex handleResolutionFor: self ] ] in MetacelloScriptEngine>>handleNotificationsForAction:
+FullBlockClosure(BlockClosure)>>on:do:
+MetacelloScriptEngine>>handleNotificationsForAction:
+[
+			self handleNotificationsForAction: [
+				| versionSpec projectSpec requiredArray |
+				self setDefaultsAndValidateProjectSpec.
+				[
+				projectSpec := (self lookupProjectSpecFor:
+					                self projectReferenceSpec) copy ]
+					on: MetacelloAllowProjectDowngrade , MetacelloAllowProjectUpgrade
+					do: [ :notification |
+						notification
+							handleOnDownGrade: onDownGradeBlock
+							onUpgrade: onUpgradeBlock ].
+
+				projectSpec loads: required.
+				projectSpec ensureProjectLoadedWithEngine: self.
+				versionSpec := projectSpec project version:
+					               projectSpec versionString.
+				requiredArray := projectSpec loadListForVersion: versionSpec.
+				self root:
+					(aBlock
+						 value: versionSpec
+						 value: requiredArray
+						 value: projectSpec) ] ] in MetacelloScriptEngine>>do:required:onProjectDownGrade:onProjectUpgrade:commitIfSuccess:
+FullBlockClosure(BlockClosure)>>ensure:
+MetacelloProjectRegistration class>>copyRegistryDuring:commitIfSuccess:
+MetacelloScriptEngine>>do:required:onProjectDownGrade:onProjectUpgrade:commitIfSuccess:
+MetacelloScriptEngine>>load:onProjectDownGrade:onProjectUpgrade:
+MetacelloScriptEngine>>load:
+[ :projectReferenceSpec |
+		| engine |
+		engine := MetacelloScriptEngine new
+			          options: self options copy;
+			          projectReferenceSpec: projectReferenceSpec;
+			          yourself.
+		engine perform: actionArg key withArguments: actionArg value.
+		engine root ifNotNil: [ :root | self roots add: root ] ] in MetacelloScriptApiExecutor(MetacelloScriptExecutor)>>execute:
+[ :projectSpec | 
+      projectSpec
+        ifNotNil: [ projectSpecBlock value: (self applyArgsToProjectSpec: projectSpec copy) ] ] in MetacelloScriptApiExecutor>>executeString:do:
+Array(SequenceableCollection)>>do:
+MetacelloScriptApiExecutor>>executeString:do:
+MetacelloScriptApiExecutor(MetacelloScriptExecutor)>>execute:
+[ 
+		^ super execute: statements ] in MetacelloScriptApiExecutor>>execute:
+[ activeProcess
+			psValueAt: index
+			put: anObject.
+		aBlock value ] in IceMetacelloLoadSessionContext(DynamicVariable)>>value:during:
+FullBlockClosure(BlockClosure)>>ensure:
+IceMetacelloLoadSessionContext(DynamicVariable)>>value:during:
+IceMetacelloLoadSessionContext class(DynamicVariable class)>>value:during:
+IceMetacelloPharoPlatform>>withMetacelloLoadSessionDo:
+MetacelloScriptApiExecutor>>execute:
+Metacello>>execute:args:
+Metacello>>load
+UndefinedObject>>DoIt
+OCReceiverDoItSemanticScope(OCDoItSemanticScope)>>evaluateDoIt:
+OpalCompiler>>evaluate
+DoItChunk>>importFor:logSource:
+[ :declaration |
+		value := declaration importFor: nil logSource: logSource  ] in CodeImporter>>evaluate
+OrderedCollection>>do:
+CodeImporter>>evaluate
+[ codeImporter evaluate ] in STCommandLineHandler>>installSourceFile:
+FullBlockClosure(BlockClosure)>>on:do:
+STCommandLineHandler>>handleErrorsDuring:reference:
+STCommandLineHandler>>installSourceFile:
+[ :reference |
+		self installSourceFile: reference ] in [ sourceFiles do: [ :reference |
+		self installSourceFile: reference ]
+	] in STCommandLineHandler>>installSourceFiles
+OrderedCollection>>do:
+[ sourceFiles do: [ :reference |
+		self installSourceFile: reference ]
+	] in STCommandLineHandler>>installSourceFiles
+FullBlockClosure(BlockClosure)>>ensure:
+STCommandLineHandler>>installSourceFiles
+STCommandLineHandler>>activate
+STCommandLineHandler class(CommandLineHandler class)>>activateWith:
+[ aCommandLinehandler activateWith: commandLine ] in PharoCommandLineHandler(BasicCommandLineHandler)>>activateSubCommand:
+FullBlockClosure(BlockClosure)>>on:do:
+PharoCommandLineHandler(BasicCommandLineHandler)>>activateSubCommand:
+PharoCommandLineHandler(BasicCommandLineHandler)>>handleSubcommand
+PharoCommandLineHandler(BasicCommandLineHandler)>>handleArgument:
+[ self handleArgument: self firstArgument ] in [ [ self handleArgument: self firstArgument ]
+		on: Exit
+		do: [ :exit |
+			"If the command line is protected by password, we just exit the image because in non-headless mode the handleExit will let the image open. If the password protection is enabled, it is to avoid to let the access to the image."
+			self class commandLinePasswordManager hasPasswordSet
+				ifTrue: [ Smalltalk snapshot: false andQuit: true ].
+			self handleExit: exit ] ] in PharoCommandLineHandler(BasicCommandLineHandler)>>activate
+FullBlockClosure(BlockClosure)>>on:do:
+[ [ self handleArgument: self firstArgument ]
+		on: Exit
+		do: [ :exit |
+			"If the command line is protected by password, we just exit the image because in non-headless mode the handleExit will let the image open. If the password protection is enabled, it is to avoid to let the access to the image."
+			self class commandLinePasswordManager hasPasswordSet
+				ifTrue: [ Smalltalk snapshot: false andQuit: true ].
+			self handleExit: exit ] ] in PharoCommandLineHandler(BasicCommandLineHandler)>>activate
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+-------------------------------------------------------------------------------
+
+Processes and their stacks: 
+Process: a Process in AtomicSharedQueue>>waitForNewItems
+  stack:
+
+AtomicSharedQueue>>waitForNewItems
+AtomicSharedQueue>>next
+TKTWorkerProcess>>privateNextTask
+TKTWorkerProcess>>workerLoop
+MessageSend>>value
+[ aValuable value ] in TKTPharoProcessProvider>>createProcessDoing:named:
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in AtomicSharedQueue>>waitForNewItems
+  stack:
+
+AtomicSharedQueue>>waitForNewItems
+AtomicSharedQueue>>next
+TKTWorkerProcess>>privateNextTask
+TKTWorkerProcess>>workerLoop
+MessageSend>>value
+[ aValuable value ] in TKTPharoProcessProvider>>createProcessDoing:named:
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in DelayMicrosecondTicker>>waitForUserSignalled:orExpired:
+  stack:
+
+DelayMicrosecondTicker>>waitForUserSignalled:orExpired:
+[  [runTimerEventLoop] whileTrue:
+		[	|nowTick|
+			"Warning! Stepping <Over> the following line may lock the Image. Use <Into> or <Proceed>."
+		 	ticker waitForUserSignalled: timingSemaphore orExpired: activeDelay.
+
+			"Invoke the api back-ends, which set the transfer-variable to nil"
+			suspendSemaphore ifNotNil: [ self suspendAtTimingPriority    ].
+			delayToStart     ifNotNil: [ self scheduleAtTimingPriority   ].
+			delayToStop      ifNotNil: [ self unscheduleAtTimingPriority ].
+
+			"Signal any expired delays"
+			nowTick := ticker nowTick.
+			[ 	activeDelay isNotNil and: [nowTick >= activeDelay resumptionTick] ]
+					whileTrue: [
+						activeDelay timingPrioritySignalExpired.
+						activeDelay := suspendedDelays removeFirstOrNil ].
+		]
+	] in DelaySemaphoreScheduler(DelayBasicScheduler)>>runBackendLoopAtTimingPriority
+FullBlockClosure(BlockClosure)>>ensure:
+DelaySemaphoreScheduler(DelayBasicScheduler)>>runBackendLoopAtTimingPriority
+[ self runBackendLoopAtTimingPriority ] in DelaySemaphoreScheduler(DelayBasicScheduler)>>startTimerEventLoopPriority:
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in MorphicRenderLoop>>doOneCycleWhile:
+  stack:
+
+MorphicRenderLoop>>doOneCycleWhile:
+[ MorphicRenderLoop new doOneCycleWhile: [ true ] ] in MorphicUIManager>>spawnNewProcess
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in SmalltalkImage>>lowSpaceWatcher
+  stack:
+
+SmalltalkImage>>lowSpaceWatcher
+[ self lowSpaceWatcher ] in SmalltalkImage>>installLowSpaceWatcher
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in [self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+  stack:
+
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in FinalizationProcess class>>finalizationProcess
+  stack:
+
+FinalizationProcess class>>finalizationProcess
+[self finalizationProcess] in FinalizationProcess class>>restartFinalizationProcess
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in nil
+  stack:
+
+Array(SequenceableCollection)>>do:
+[:logger |
+		logger nextPutAll: 'Processes and their stacks: ';cr.
+
+		Process allInstances do: [:each | | ctx |
+			logger nextPutAll: 'Process: '; print: each; cr; nextPutAll: '  stack:'; cr; cr.
+
+			ctx := each isActive ifTrue: [ thisContext sender ] ifFalse: [ each suspendedContext ].
+			ctx ifNotNil: [
+				(ctx stackOfSize: 20) do: [:s | logger print: s; cr ]].
+			logger nextPutAll: '------------------------------'; cr; cr.
+		]] in [ Smalltalk
+		logError: aString
+		inContext: aContext.
+
+	" Print stacks of all current processes "
+
+	Smalltalk logDuring: [:logger |
+		logger nextPutAll: 'Processes and their stacks: ';cr.
+
+		Process allInstances do: [:each | | ctx |
+			logger nextPutAll: 'Process: '; print: each; cr; nextPutAll: '  stack:'; cr; cr.
+
+			ctx := each isActive ifTrue: [ thisContext sender ] ifFalse: [ each suspendedContext ].
+			ctx ifNotNil: [
+				(ctx stackOfSize: 20) do: [:s | logger print: s; cr ]].
+			logger nextPutAll: '------------------------------'; cr; cr.
+		]].
+	] in NonInteractiveUIManager(CommandLineUIManager)>>quitFrom:withMessage:
+[
+		logStream := self openLog.
+		aMonadicBlock value: logStream.
+	] in SmalltalkImage>>logDuring:
+FullBlockClosure(BlockClosure)>>ensure:
+SmalltalkImage>>logDuring:
+[ Smalltalk
+		logError: aString
+		inContext: aContext.
+
+	" Print stacks of all current processes "
+
+	Smalltalk logDuring: [:logger |
+		logger nextPutAll: 'Processes and their stacks: ';cr.
+
+		Process allInstances do: [:each | | ctx |
+			logger nextPutAll: 'Process: '; print: each; cr; nextPutAll: '  stack:'; cr; cr.
+
+			ctx := each isActive ifTrue: [ thisContext sender ] ifFalse: [ each suspendedContext ].
+			ctx ifNotNil: [
+				(ctx stackOfSize: 20) do: [:s | logger print: s; cr ]].
+			logger nextPutAll: '------------------------------'; cr; cr.
+		]].
+	] in NonInteractiveUIManager(CommandLineUIManager)>>quitFrom:withMessage:
+FullBlockClosure(BlockClosure)>>ensure:
+NonInteractiveUIManager(CommandLineUIManager)>>quitFrom:withMessage:
+NonInteractiveUIManager(CommandLineUIManager)>>handleError:log:
+NonInteractiveUIManager(UIManager)>>handleError:
+Process>>handleError:
+OCCodeError(Exception)>>unhandledErrorAction
+UnhandledError>>defaultAction
+UndefinedObject>>handleSignal:
+Context>>handleSignal:
+Context>>handleSignal:
+Context>>handleSignal:
+Context>>handleSignal:
+Context>>handleSignal:
+Context>>handleSignal:
+------------------------------
+
+Process: a Process in [delaySemaphore wait] in Delay>>wait
+  stack:
+
+[delaySemaphore wait] in Delay>>wait
+FullBlockClosure(BlockClosure)>>ifCurtailed:
+Delay>>wait
+Duration>>wait
+[
+		"Loop until enough time passed since last #schedule"
+		[ DateAndTime now < (lastSchedule + duration) ]
+			whileTrue: [ duration wait ].
+
+		"Execute deferred action (if not flushed before) and clean up"
+		self flush.
+	] in OmDeferrer>>runMessageProcess
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in Process>>endProcess
+  stack:
+
+Process>>endProcess
+------------------------------
+
+Process: a Process in [
+		[ true ] whileTrue: [
+			semaphore wait.
+			[self executeCallback: self nextPendingCallback]
+				on: Exception fork:  [:ex | ex pass ] ] ] in TFCallbackQueue>>forkCallbackProcess
+  stack:
+
+[
+		[ true ] whileTrue: [
+			semaphore wait.
+			[self executeCallback: self nextPendingCallback]
+				on: Exception fork:  [:ex | ex pass ] ] ] in TFCallbackQueue>>forkCallbackProcess
+[self value.
+			"IMPORTANT: Do not step over next line of code. See method comments for details"
+			Processor terminateRealActive] in FullBlockClosure(BlockClosure)>>newProcess
+------------------------------
+
