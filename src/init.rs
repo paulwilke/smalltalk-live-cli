@@ -4,6 +4,16 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Stage 1 of `init` (needs network, runs once and is cached as neojson.image): JSON for applications. NeoJSON is MIT licensed (Sven Van Caekenberghe) and fetched from upstream, never bundled.
+const NEOJSON_ST: &str = r#"[ Metacello new
+	baseline: 'NeoJSON';
+	repository: 'github://svenvc/NeoJSON:v18/repository';
+	load: #( 'core' ) ]
+	on: Error
+	do: [ :e | Stdio stdout nextPutAll: 'stlive: NeoJSON not loaded: ' , e messageText asString; lf; flush ].
+Smalltalk snapshot: true andQuit: true.
+"#;
+
 const PREPARE_ST: &str = r#"| src |
 src := (Smalltalk os environment at: 'STLIVE_SRC') asFileReference.
 Metacello new
@@ -87,6 +97,7 @@ pub fn sources_hash() -> String {
         feed(content);
     }
     feed(PREPARE_ST);
+    feed(NEOJSON_ST);
     feed(&serve_st());
     feed(&run_st());
     format!("{:016x}", h)
@@ -159,10 +170,37 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
     let src = write_sources(home)?;
     std::fs::write(home.join("prepare.st"), PREPARE_ST).map_err(|e| e.to_string())?;
 
-    // 3. Image = base image + StLive package
+    // 3a. Base image + NeoJSON, built once and cached (network only here; re-running `init` after an stlive update is offline)
+    let base = pharo_dir.join("Pharo.image");
+    let neo_image = pharo_dir.join("neojson.image");
+    let marker = pharo_dir.join("neojson.ok");
+    let base_id = std::fs::metadata(&base).map(|m| m.len().to_string()).unwrap_or_default();
+    let cached = !force && neo_image.exists() && std::fs::read_to_string(&marker).map(|t| t.trim() == base_id).unwrap_or(false);
+    let mut neo_warning: Option<String> = None;
+    if !cached {
+        let _ = std::fs::remove_file(&marker);
+        std::fs::copy(&base, &neo_image).map_err(|e| e.to_string())?;
+        let _ = std::fs::copy(pharo_dir.join("Pharo.changes"), pharo_dir.join("neojson.changes"));
+        std::fs::write(home.join("neojson.st"), NEOJSON_ST).map_err(|e| e.to_string())?;
+        eprintln!("stlive: loading NeoJSON (once; cached as {}) ...", neo_image.display());
+        let _ = Command::new(&vm)
+            .arg("--headless")
+            .arg(&neo_image)
+            .arg("st")
+            .arg(home.join("neojson.st"))
+            .stdout(std::fs::File::create(home.join("neojson.log")).map(Stdio::from).unwrap_or_else(|_| Stdio::null()))
+            .stderr(Stdio::null())
+            .status();
+        let log = std::fs::read_to_string(home.join("neojson.log")).unwrap_or_default();
+        match log.lines().find(|l| l.contains("stlive: NeoJSON not loaded")) {
+            Some(w) => neo_warning = Some(w.to_string()),
+            None => { let _ = std::fs::write(&marker, &base_id); }
+        }
+    }
+    // 3b. Image = (base + NeoJSON) + StLive package
     let image = pharo_dir.join("stlive.image");
-    std::fs::copy(pharo_dir.join("Pharo.image"), &image).map_err(|e| e.to_string())?;
-    let _ = std::fs::copy(pharo_dir.join("Pharo.changes"), pharo_dir.join("stlive.changes"));
+    std::fs::copy(&neo_image, &image).map_err(|e| e.to_string())?;
+    let _ = std::fs::copy(pharo_dir.join(if neo_image.with_extension("changes").exists() { "neojson.changes" } else { "Pharo.changes" }), pharo_dir.join("stlive.changes"));
     eprintln!("stlive: loading the StLive package into the image ...");
     run(
         Command::new(&vm)
@@ -182,6 +220,9 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
         if !bad.is_empty() {
             return Err(format!("loading the StLive package into the image reported problems (see {}):\n{}", home.join("prepare.log").display(), bad.join("\n")));
         }
+    }
+    if let Some(w) = neo_warning {
+        eprintln!("stlive: warning – {} (JSON for applications will not be available; run `stlive init` again with network access)", w);
     }
 
     // 4. Remember

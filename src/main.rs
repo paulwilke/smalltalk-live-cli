@@ -44,7 +44,7 @@ struct Cli {
     cmd: Cmd,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Cmd {
     /// One-time setup: download Pharo 13 and build an image with the StLive server
     Init {
@@ -223,7 +223,7 @@ enum Cmd {
     Raw { cmd: String, args: Vec<String> },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum ObjCmd {
     /// Summary with instance variables (paginated)
     Show { r#ref: String, #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64>, /// Also show internals of system collections
@@ -244,7 +244,7 @@ enum ObjCmd {
     Release { r#ref: Option<String>, #[arg(long)] all: bool },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum FindCmd {
     Class { pattern: String, #[arg(long)] limit: Option<u64> },
     Package { pattern: String, #[arg(long)] limit: Option<u64> },
@@ -252,7 +252,7 @@ enum FindCmd {
     Senders { selector: String, #[arg(long)] limit: Option<u64> },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum ClassCmd {
     /// Hierarchy, variables, methods ('Foo' or 'Foo class')
     Show { name: String, #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64> },
@@ -272,7 +272,7 @@ enum ClassCmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum MethodCmd {
     /// Source of Class>>selector
     Show { target: String },
@@ -292,7 +292,7 @@ enum MethodCmd {
     Remove { class: String, selector: String, #[arg(long)] force: bool },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum ChangesCmd {
     /// Recorded changes (also those made by eval or the IDE); --since N lists entries after index N
     List { #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64>, #[arg(long)] since: Option<u64> },
@@ -301,7 +301,7 @@ enum ChangesCmd {
     Show { index: u64 },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum UiCmd {
     /// Open windows with title, presenter class, bounds and an object reference
     Windows,
@@ -323,13 +323,13 @@ enum UiCmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum PackageCmd {
     /// List packages (substring or glob like 'Mapless*'; default all)
     List { pattern: Option<String>, #[arg(long)] limit: Option<u64> },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum TestCmd {
     /// List test classes (substring or glob on class or package name)
     List { pattern: Option<String>, #[arg(long)] limit: Option<u64> },
@@ -348,7 +348,7 @@ enum TestCmd {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum DebugCmd {
     /// Sessions (ended ones only with --all)
     List { #[arg(long)] all: bool },
@@ -378,7 +378,7 @@ enum DebugCmd {
     Terminate { session: Option<String>, #[arg(long)] all: bool },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum ImageCmd {
     /// Snapshot the image to disk
     Save,
@@ -453,7 +453,82 @@ fn resolve_state_dir(explicit: &Option<PathBuf>, create: bool) -> PathBuf {
 
 static TEXT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+struct LogCtx {
+    path: PathBuf,
+    tag: Option<String>,
+    instance: String,
+    command: String,
+    summary: String,
+    started: Instant,
+}
+
+static LOG: std::sync::Mutex<Option<LogCtx>> = std::sync::Mutex::new(None);
+
+fn set_log(path: &Option<PathBuf>, tag: &Option<String>, instance: &str, command: String, summary: String) {
+    if let (Some(p), Ok(mut g)) = (path, LOG.lock()) {
+        let started = g.as_ref().map(|c| c.started).unwrap_or_else(Instant::now);
+        *g = Some(LogCtx { path: p.clone(), tag: tag.clone(), instance: instance.to_string(), command, summary, started });
+    }
+}
+
+/// Write the call log line once (every command ends in `emit` or `log_done`).
+fn log_response(resp: &Value, exit: i32) {
+    let ctx = LOG.lock().ok().and_then(|mut g| g.take());
+    if let Some(c) = ctx {
+        write_log(&c.path, c.tag.as_deref(), &c.instance, &c.command, &c.summary, c.started.elapsed(), resp, exit);
+    }
+}
+
+fn log_done(ok: bool, exit: i32, extra: Value) {
+    let mut resp = json!({"ok": ok, "result": extra});
+    if !ok { resp["error"] = json!({"code": "exit", "message": format!("exit code {}", exit)}); }
+    log_response(&resp, exit);
+}
+
+fn camel_to_kebab(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() { if i > 0 { out.push('-'); } out.extend(c.to_lowercase()); } else { out.push(c); }
+    }
+    out
+}
+
+/// "image.export", "run", "open-ui" ... from the Debug text of a parsed command.
+fn label_of(cmd: &Cmd) -> String {
+    let d = format!("{:?}", cmd);
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for c in d.chars() {
+        if c.is_alphanumeric() { cur.push(c); } else { if !cur.is_empty() { parts.push(std::mem::take(&mut cur)); } if c == ' ' || c == '{' { break; } }
+    }
+    if !cur.is_empty() { parts.push(cur); }
+    parts.truncate(2);
+    parts.iter().map(|p| camel_to_kebab(p)).collect::<Vec<_>>().join(".")
+}
+
+fn short(s: &str) -> String {
+    let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > 60 { format!("{}...", one.chars().take(60).collect::<String>()) } else { one }
+}
+
+fn early_summary(cmd: &Cmd) -> String {
+    match cmd {
+        Cmd::Run { eval, file, .. } => short(&eval.clone().or_else(|| file.as_ref().map(|f| f.display().to_string())).unwrap_or_default()),
+        Cmd::Save { package, all, .. } | Cmd::Drift { package, all, .. } => if *all { "--all".into() } else { package.clone().unwrap_or_default() },
+        Cmd::Load { baseline, .. } => baseline.clone(),
+        Cmd::OpenUi { url, .. } => short(url),
+        _ => String::new(),
+    }
+}
+
 fn emit(value: &Value, pretty: bool) {
+    emit_inner(value, pretty);
+    if value.get("ok").is_some() {
+        log_response(value, exit_code_for(value));
+    }
+}
+
+fn emit_inner(value: &Value, pretty: bool) {
     if TEXT_MODE.load(std::sync::atomic::Ordering::Relaxed) {
         let mut out = String::new();
         render_text(value, 0, &mut out);
@@ -894,6 +969,8 @@ fn main() {
     let cli = Cli::parse();
     let pretty = cli.pretty;
     TEXT_MODE.store(cli.text, std::sync::atomic::Ordering::Relaxed);
+    let early_inst = cli.instance.clone();
+    set_log(&cli.log, &cli.tag, &early_inst, label_of(&cli.cmd), early_summary(&cli.cmd));
     let creating = matches!(cli.cmd, Cmd::Start { .. });
     let inst = Instance { dir: resolve_state_dir(&cli.state_dir, creating), name: cli.instance.clone() };
 
@@ -1150,18 +1227,13 @@ fn main() {
     // The image enforces the evaluation timeout (default 30 s) and answers with a debug session;
     // the socket timeout only guards against a wedged image.
     let read_timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000) + 15_000);
-    let started = Instant::now();
-    let summary = summarize(&cmd, &args);
+    set_log(&cli.log, &cli.tag, &inst.name, cmd.clone(), summarize(&cmd, &args));
     let mut resp = call(&inst, &cmd, args, read_timeout, pretty);
     if cmd == "changes.show" {
         add_diff(&mut resp);
     }
     emit(&resp, pretty);
-    let code = exit_code_for(&resp);
-    if let Some(path) = &cli.log {
-        write_log(path, cli.tag.as_deref(), &inst.name, &cmd, &summary, started.elapsed(), &resp, code);
-    }
-    std::process::exit(code);
+    std::process::exit(exit_code_for(&resp));
 }
 
 /// Open `url` in a chromeless application window (Chrome/Edge `--app=`), the web-UI way of "developing a window".
@@ -1421,6 +1493,7 @@ fn run_program(inst: &Instance, load: Vec<PathBuf>, packages: Vec<String>, prepa
         let _ = se.flush();
     }
     let code = if timed_out { 124 } else { code_file.unwrap_or(70) };
+    log_done(code == 0, code, json!({"timed_out": timed_out}));
     if !keep && (code_file.is_some() || timed_out) {
         let _ = std::fs::remove_dir_all(&dir);
     } else if keep || code_file.is_none() {

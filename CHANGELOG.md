@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+- **NeoJSON in the template image**: `stlive init` loads NeoJSON (core, pinned to v18, MIT licensed, from upstream – not bundled) so applications and `stlive run` have `NeoJSONWriter`/`NeoJSONReader` (it writes an `OrderedCollection`, and shared literals such as `#()` do not break it). `init` warns instead of failing when the download is not possible. Re-run `stlive init` to get it into an existing template.
+- **Fetched once, then cached**: NeoJSON is loaded into a cached base image (`~/.stlive/pharo/neojson.image`) the first time; later `stlive init` runs (for example after an stlive update) reuse it and need no network. `run`, `start` and every instance only copy the template image – nothing is downloaded per call. `init --force` refreshes the cache.
+- **Every command is logged** with `--log`: `run`, `save`, `drift`, `start`, `stop`, `init`, `attach`, `image export` … (not only the ones that talk to the image), including unreachable-instance failures.
+- Skill: `save … --verify` is now the fixed last step; `stlive run` exit codes and a start-script example (`StLiveRun arguments`, `exit:`, `--prepare`); STON "shared reference" tip; wrong test expectation → fix the test, open a session only for unexpected behaviour.
+- README: third-party notices (Pharo, NeoJSON).
+
+
 ## 0.6.0 – from pilot runs
 - **Fix: changes made by `eval` were silently not recorded** after a test run that left a failing test suspended. Recording was suppressed globally while a job ran inside the suppressed block; the suppression is now per process.
 - `stlive drift --package X|--all --dir src`: compares the image with the Tonel files (methods and classes missing on either side, methods whose source differs; exit code 1 on drift). `stlive save … --verify` runs it after writing. `save` now **warns** (and exits 1) about recorded changes it could not write (for example a class without a package) instead of staying silent.

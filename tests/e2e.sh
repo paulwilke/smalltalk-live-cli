@@ -175,6 +175,13 @@ $S run --eval "StLiveRun exit: 3" >/dev/null 2>&1; [ $? -eq 3 ] && { pass=$((pas
 $S run --eval "1 zork" >/dev/null 2>"$WORK/run.err"; RC=$?
 { [ $RC -eq 1 ] && grep -q "zork" "$WORK/run.err"; } && { pass=$((pass+1)); echo "ok   - run: errors go to stderr with exit code 1"; } || { fail=$((fail+1)); echo "FAIL - run error handling (rc=$RC)"; }
 
+# --- 0.6.1: NeoJSON in the template, every command is logged
+RUNOUT=$($S run --eval "NeoJSONWriter toString: (OrderedCollection with: #() with: #() with: 'ä')" 2>/dev/null)
+out="{\"v\":\"$(echo "$RUNOUT" | sed 's/"/\\"/g')\"}"; check "NeoJSON is in the image (shared empty literals are fine)" '.v|contains("ä")'
+STLIVE_LOG="$WORK/all.jsonl" STLIVE_TAG=e2e $S run --eval 1 >/dev/null 2>&1
+STLIVE_LOG="$WORK/all.jsonl" $S drift --all --dir dsrc >/dev/null 2>&1
+out="{\"v\":\"$(jq -r .command "$WORK/all.jsonl" | tr "\n" ",")\"}"; check "run and drift appear in the call log" '.v' "run,drift,"
+
 # --- delivery: export an image without the stlive server
 $S start >/dev/null
 $S class create Shipped --package App >/dev/null

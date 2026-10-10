@@ -194,6 +194,10 @@ cargo build --release
 
 The Smalltalk side lives in `smalltalk/src` (Tonel) and is compiled into the binary; `stlive init` writes it out and loads it with Metacello.
 
+## Third-party software
+
+`stlive` itself contains only its own code (MIT). At `stlive init` it downloads, from their upstream locations and not bundled in this repository: **Pharo** (VM and image; MIT, https://pharo.org) and **NeoJSON** (JSON library, MIT, Sven Van Caekenberghe, https://github.com/svenvc/NeoJSON). An image exported with `stlive image export` contains both – when you distribute it, include their MIT license notices.
+
 ## License and trademarks
 
 MIT, see [LICENSE](LICENSE). *stlive* is an independent tool and is not affiliated with or endorsed by the Pharo project or the Pharo consortium; "Pharo" and other product names are used only to say what the tool works with.

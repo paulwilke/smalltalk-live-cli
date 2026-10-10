@@ -28,9 +28,9 @@ stlive image info                             # version, loaded packages, unsave
 3. **Understand the code**: `method show 'Class>>selector'`, `class show Foo`, `find implementors|senders <selector>`, `find class '<glob>'`, `package list '<glob>'`.
 4. **Hypothesis → small experiment → change the method**: `method compile ClassName - <<'EOF' … EOF` (also `--file`, `--source`). An existing method keeps its protocol; a NEW method needs `--protocol <name>` (`'*Pkg'` for an extension of package Pkg). The result lists `stale_frames`: suspended executions still running the old code.
 5. **Re-run correctly.** `debug resume` continues the OLD execution and proves nothing. Use `debug rerun <session>` (fresh execution of the original operation with the current code) or `debug restart <session> --frame n` (only when restarting that frame is semantically right). Then run the tests.
-6. **Verify**: write a regression test, **see it fail first** (`test run`), then pass after the fix; also run neighbouring tests. Check the restored objects, not only a green bar.
+6. **Verify**: write a regression test, **see it fail first** (`test run`), then pass after the fix; also run neighbouring tests. Check the restored objects, not only a green bar. If a test fails because its *expectation* is wrong, correct the test; open a debug session only when the code behaves unexpectedly.
 7. **Persist**: changes made through the CLI live only in the image. `changes list|show` (unified diff), then `save --package <Pkg> --dir <repo>/src [--dry-run]` or `save --all --dir <repo>/src`. Packages come from `changes list` (`unsaved_by_package`) or a frame's `package`. Check `git diff` – it should be minimal – and commit with git.
-8. **Clean up**: `debug terminate --all` (sessions of failing tests stay suspended; max 60 are kept).
+8. **Finish**: the last command before you report done is `stlive save --all --dir <repo>/src --verify` (or `stlive drift --all --dir <repo>/src`). **Exit 1 means drift** – the image has methods or classes the files lack (or the reverse); fix it, otherwise a fresh image will behave differently. Then `debug terminate --all` (sessions of failing tests stay suspended; max 60 are kept).
 
 ## GUI development (Spec2/Morphic windows)
 
@@ -47,8 +47,22 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead �
 ## Practical tips
 - Before you finish: `stlive save --all --dir <repo>/src --verify` (or `stlive drift --all --dir <repo>/src`). It compares the image with the Tonel files and fails if a method exists only in the image – changes that were not recorded would otherwise only show up in a fresh image (red tests).
 - To run the finished program from the sources in a clean image: `stlive run --load <repo>/src --eval 'MyApp run' -- arg1 arg2` (stdout = only the result, errors on stderr, `StLiveRun arguments` for the arguments, `StLiveRun exit: n` for the exit code). Do not write your own loader script.
+  Example – a start script (the Smalltalk goes into a file, so shell quoting cannot mangle string literals):
+  ```bash
+  # start.st
+  | args |
+  args := StLiveRun arguments.
+  args isEmpty ifTrue: [ StLiveRun stderr: 'usage: app <file>'. StLiveRun exit: 2 ].
+  MyApp new run: args first
+
+  # app.sh
+  exec stlive run --load src --package MyApp --package MyApp-Tools --prepare deps.st --file start.st -- "$@"
+  ```
+  `--prepare deps.st` is a Smalltalk file evaluated after loading (for example a Metacello load of another library); `--package` fixes the load order; the value of the expression is the program's stdout.
 - Non-ASCII output: in `stlive run` use the expression value or `StLiveRun stdout:` (UTF-8 is handled). Writing to `Stdio stdout` directly is not reliable for non-ASCII characters.
-- JSON: `STONJSON` is in the image but cannot write an `OrderedCollection`; for NeoJSON run `stlive load NeoJSON --repository github://svenvc/NeoJSON:master/repository`.
+- JSON: NeoJSON (MIT, by Sven Van Caekenberghe) is loaded by `stlive init`: `NeoJSONWriter toString: anObject`, `NeoJSONReader fromString: s`. Re-run `stlive init` for images built before 0.6.1 (needs network once). `STONJSON` is also there but cannot write an `OrderedCollection`.
+- `shared reference detected` (STON): the same literal such as `#()` or `''` used in several fields of one structure breaks STON serialisation. Use `Array new`, fresh objects, or NeoJSON. Exercise the error paths of your program, not only the good ones: that is where it shows.
+- `stlive run` exit codes: 0 ok, 1 unhandled exception in your expression (message and stack on stderr), the code you pass to `StLiveRun exit: n`, 124 timeout, 2 usage error (e.g. an unknown stlive option before `--`). Everything after `--` belongs to your program.
 - A `MessageNotUnderstood` error lists `did_you_mean` – real selectors of the receiver. Use them instead of guessing from memory; `find implementors <selector>` shows where a selector lives.
 - A `value.hint` means the printed value was cut; use `eval --full` or `obj text <ref>`.
 - Quoting: code with Smalltalk string literals (`'…'`) inside a single-quoted shell argument loses its quotes; use stdin: `stlive eval - <<'EOF' … EOF`.
