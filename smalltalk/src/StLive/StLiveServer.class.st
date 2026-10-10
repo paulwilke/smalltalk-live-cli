@@ -21,7 +21,7 @@ Class {
 		'commands',
 		'changes',
 		'portFile',
-		'suppressDepth'
+		'suppressed'
 	],
 	#classVars : [
 		'Current',
@@ -99,7 +99,7 @@ StLiveServer >> initialize [
 	changes := OrderedCollection new.
 	startedAt := DateAndTime now.
 	running := false.
-	suppressDepth := 0.
+	suppressed := IdentitySet new.
 	describer := StLiveDescriber on: self.
 	commands := StLiveCommands on: self
 ]
@@ -356,9 +356,19 @@ StLiveServer >> handleLine: aString [
 
 { #category : 'recording' }
 StLiveServer >> suppressRecordingDuring: aBlock [
-	"Changes made by the tool itself (already logged) or by bulk loads are not recorded again."
-	suppressDepth := suppressDepth + 1.
-	^ aBlock ensure: [ suppressDepth := suppressDepth - 1 ]
+	"Changes made by the tool itself (already logged) or by bulk loads are not recorded again.
+	Per process: a job that stays suspended inside this block (a failing test, an interrupted load) must not
+	silence changes made by other processes."
+	| process added |
+	process := Processor activeProcess.
+	added := (suppressed includes: process) not.
+	added ifTrue: [ suppressed add: process ].
+	^ aBlock ensure: [ added ifTrue: [ suppressed remove: process ifAbsent: [ nil ] ] ]
+]
+
+{ #category : 'recording' }
+StLiveServer >> isRecordingSuppressed [
+	^ suppressed includes: Processor activeProcess
 ]
 
 { #category : 'recording' }
@@ -383,7 +393,7 @@ StLiveServer >> isOwnClass: aClass [
 StLiveServer >> methodChanged: announcement [
 	"Eval-made (or GUI-made) method changes end up in the same change log as CLI compiles."
 	| m cls old |
-	suppressDepth > 0 ifTrue: [ ^ self ].
+	self isRecordingSuppressed ifTrue: [ ^ self ].
 	[ m := announcement method.
 	cls := m methodClass.
 	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
@@ -409,7 +419,7 @@ StLiveServer >> methodChanged: announcement [
 { #category : 'recording' }
 StLiveServer >> methodRemoved: announcement [
 	| m cls |
-	suppressDepth > 0 ifTrue: [ ^ self ].
+	self isRecordingSuppressed ifTrue: [ ^ self ].
 	[ m := announcement method.
 	cls := m methodClass.
 	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
@@ -431,7 +441,7 @@ StLiveServer >> methodRemoved: announcement [
 { #category : 'recording' }
 StLiveServer >> classChanged: announcement [
 	| cls |
-	suppressDepth > 0 ifTrue: [ ^ self ].
+	self isRecordingSuppressed ifTrue: [ ^ self ].
 	[ cls := (announcement respondsTo: #classAffected) ifTrue: [ announcement classAffected ] ifFalse: [ announcement classAdded ].
 	(cls isNil or: [ cls isMeta or: [ self isOwnClass: cls ] ]) ifTrue: [ ^ self ].
 	changes add: (commands classChangeEntry: cls origin: 'eval') ] on: Error do: [ :e | nil ]

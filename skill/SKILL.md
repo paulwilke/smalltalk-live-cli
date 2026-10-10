@@ -45,6 +45,12 @@ Start the image with `stlive start --gui`; Pharo opens its window and stays conn
 For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead – no GUI mode needed.
 
 ## Practical tips
+- Before you finish: `stlive save --all --dir <repo>/src --verify` (or `stlive drift --all --dir <repo>/src`). It compares the image with the Tonel files and fails if a method exists only in the image – changes that were not recorded would otherwise only show up in a fresh image (red tests).
+- To run the finished program from the sources in a clean image: `stlive run --load <repo>/src --eval 'MyApp run' -- arg1 arg2` (stdout = only the result, errors on stderr, `StLiveRun arguments` for the arguments, `StLiveRun exit: n` for the exit code). Do not write your own loader script.
+- Non-ASCII output: in `stlive run` use the expression value or `StLiveRun stdout:` (UTF-8 is handled). Writing to `Stdio stdout` directly is not reliable for non-ASCII characters.
+- JSON: `STONJSON` is in the image but cannot write an `OrderedCollection`; for NeoJSON run `stlive load NeoJSON --repository github://svenvc/NeoJSON:master/repository`.
+- A `MessageNotUnderstood` error lists `did_you_mean` – real selectors of the receiver. Use them instead of guessing from memory; `find implementors <selector>` shows where a selector lives.
+- A `value.hint` means the printed value was cut; use `eval --full` or `obj text <ref>`.
 - Quoting: code with Smalltalk string literals (`'…'`) inside a single-quoted shell argument loses its quotes; use stdin: `stlive eval - <<'EOF' … EOF`.
 - `print` fields are truncated at 120 characters; get the full text with `obj text <ref>` or page with `obj items`.
 - Endless recursion: a timeout session; read `error.recursion.cycle` to see the repeating frames.

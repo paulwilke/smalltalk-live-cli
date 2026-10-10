@@ -1,9 +1,20 @@
 # Changelog
 
-## 0.5.0-pharo14 (branch pharo-14)
+## 0.6.0 – from pilot runs
+- **Fix: changes made by `eval` were silently not recorded** after a test run that left a failing test suspended. Recording was suppressed globally while a job ran inside the suppressed block; the suppression is now per process.
+- `stlive drift --package X|--all --dir src`: compares the image with the Tonel files (methods and classes missing on either side, methods whose source differs; exit code 1 on drift). `stlive save … --verify` runs it after writing. `save` now **warns** (and exits 1) about recorded changes it could not write (for example a class without a package) instead of staying silent.
+- `stlive run --load <tonel dir> --eval '<expr>' -- <args>`: one-shot headless run of a program from Tonel sources in a **fresh image**. stdout carries only the result (Strings raw, UTF-8 intact; Pharo's own console noise never reaches it), errors and stack go to stderr, exit code is passed through (`StLiveRun exit: n`), arguments arrive via `StLiveRun arguments`, `StLiveRun stdout:`/`stderr:` for explicit output; `--file`, `--prepare`, `--package`, `--timeout`, `--keep`.
+- Failed sends now carry `did_you_mean`: existing selectors of the receiver that look like the one that was not understood (typos, wrong keyword names, wrong arity).
+- Truncated `print` values carry a `hint` how to get the full text (`eval --full`, `obj text <ref>`).
+- The call log of `test run` now has `sessions` (the debug sessions of the red tests) and `groups` (cause, count, frame).
+- `init` fails loudly when loading the StLive package into the image reports problems (it used to report success).
+
+
+## Pharo 14 (branch pharo-14, on top of the 0.6.0 line)
 - `stlive init --pharo 14` downloads Pharo 14 into `~/.stlive/pharo14` and builds its template; `stlive start --pharo 14` uses it (remembered per instance).
 - Pharo 14's VM cannot be kept alive with `st … --no-quit`: for version 14+ `start` uses the worker mode (`--worker --headless`) automatically. `--gtk` selects that mode explicitly (for Spec-Gtk images), `--vm-arg` passes extra VM options before the image (repeatable).
 - Verified on Pharo 14.0 (headless worker mode): eval, debug sessions, tests, Transcript capture, object graph, server self-upgrade. **Not verified:** Spec-Gtk itself (no GTK on the test machine); `ui windows|screenshot|press` and `eval --ui` still understand Morphic only.
+
 
 ## 0.5.0
 - **The server upgrades itself.** `stlive start` compares a hash of the embedded Smalltalk sources with the one recorded in the image and, if they differ (an image built by an older stlive – the template *and* the per-project copies), loads the current server into the image before starting it. Previously a new binary silently kept using an old server (for instance the old Transcript failure in GUI mode) until `stlive init --force`.

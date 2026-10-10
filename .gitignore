@@ -3,3 +3,4 @@
 *.image
 *.changes
 Cargo.lock.bak
+PharoDebug.log

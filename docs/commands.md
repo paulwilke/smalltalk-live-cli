@@ -28,6 +28,8 @@ Commands:
   debug      Debug sessions
   image      Image persistence, info and cloning
   save       Write changes made through this CLI back to Tonel files (minimal per-method diffs)
+  run        One-shot headless run of a program from Tonel sources in a FRESH image; stdout carries only the program's result
+  drift      Compare the image with the Tonel files of a package: methods or classes that exist only on one side, or differ
   load       Load a Metacello baseline; reports the packages that appeared
   raw        Send a raw command: stlive raw debug.frames session=dbg-1 limit=3
   help       Print this message or the help of the given subcommand(s)
@@ -75,6 +77,53 @@ Options:
       --port <PORT>            Port of the running server (its state file: <dir>/<instance>.port.json)
       --pid <PID>              Process id of that image (found automatically if omitted (lsof or netstat))
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --pretty                 Pretty-print JSON
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+  -h, --help                   Print help
+```
+
+## `stlive run`
+
+```
+One-shot headless run of a program from Tonel sources in a FRESH image; stdout carries only the program's result
+
+Usage: stlive run [OPTIONS] [-- <ARGS>...]
+
+Arguments:
+  [ARGS]...  Arguments for the program: read them with `StLiveRun arguments`
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --load <LOAD>            Tonel source directory to load (one folder per package; repeatable)
+      --package <PACKAGES>     Only these packages, in this order (default: every package folder)
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --prepare <PREPARE>      Smalltalk file evaluated after loading (e.g. to load a Metacello dependency)
+      --pretty                 Pretty-print JSON
+      --eval <EVAL>            Expression to evaluate; its value is printed (Strings raw, others printString)
+      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --file <FILE>            Smalltalk file to evaluate instead of --eval
+      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
+      --timeout <TIMEOUT>      Seconds before the run is killed (exit code 124) [default: 300]
+      --keep                   Keep the work directory (image, logs) for inspection
+  -h, --help                   Print help
+```
+
+## `stlive drift`
+
+```
+Compare the image with the Tonel files of a package: methods or classes that exist only on one side, or differ
+
+Usage: stlive drift [OPTIONS] --dir <DIR>
+
+Options:
+  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --package <PACKAGE>      Package to compare (or --all for every package folder in --dir that is loaded in the image)
+      --all                    
+      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --dir <DIR>              Source directory with one folder per package
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
@@ -1258,6 +1307,7 @@ Options:
       --dry-run                Show what would be written
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --verify                 After writing, compare image and files and fail if they still differ
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help
 ```

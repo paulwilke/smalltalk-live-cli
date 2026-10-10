@@ -330,3 +330,80 @@ pub fn plan(changes: &[Value], package: &str, dir: &Path, dry_run: bool) -> Resu
     }
     Ok(Plan { report, marked })
 }
+
+/// One method as written in a Tonel file: class header ("Foo" / "Foo class"), selector, normalised source.
+pub struct FileMethod {
+    pub class_header: String,
+    pub selector: String,
+    pub source: String,
+}
+
+fn normalise(src: &str) -> String {
+    let lines: Vec<String> = norm(src).lines().map(|l| l.trim_end().to_string()).collect();
+    lines.join("\n").trim_end().to_string()
+}
+
+/// All methods of a Tonel `.class.st` / `.extension.st` text.
+pub fn parse_methods(text: &str) -> Vec<FileMethod> {
+    let mut out = Vec::new();
+    for b in method_blocks(text) {
+        let block = &text[b.start..b.end];
+        let lines: Vec<&str> = block.lines().collect();
+        if lines.len() < 3 { continue; }
+        let head = lines[1];
+        let pattern = head.split_once(" >> ").map(|(_, r)| r.trim_end().trim_end_matches('[').trim()).unwrap_or("");
+        // body: everything after the header line up to the closing "]" line
+        let mut body: Vec<&str> = lines[2..].to_vec();
+        while body.last().map(|l| l.trim().is_empty()).unwrap_or(false) { body.pop(); }
+        if body.last().map(|l| l.trim() == "]").unwrap_or(false) { body.pop(); }
+        let mut source = pattern.to_string();
+        for l in body { source.push('\n'); source.push_str(l); }
+        out.push(FileMethod { class_header: b.class_header.clone(), selector: b.selector.clone(), source: normalise(&source) });
+    }
+    out
+}
+
+/// Compare the methods the image has for a package with the Tonel files in `<dir>/<package>/`.
+pub fn drift(image: &Value, package: &str, dir: &Path) -> Value {
+    let pkg_dir = dir.join(package);
+    let mut in_files: BTreeMap<String, String> = BTreeMap::new();
+    let mut file_classes: Vec<String> = Vec::new();
+    if let Ok(rd) = fs::read_dir(&pkg_dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if name.ends_with(".class.st") { file_classes.push(name.trim_end_matches(".class.st").to_string()); }
+            if name.ends_with(".class.st") || name.ends_with(".extension.st") {
+                if let Ok(t) = fs::read_to_string(&p) {
+                    for m in parse_methods(&t) {
+                        let (cls, side) = match m.class_header.strip_suffix(" class") { Some(c) => (c.to_string(), "class"), None => (m.class_header.clone(), "instance") };
+                        in_files.insert(format!("{}|{}|{}", cls, side, m.selector), m.source);
+                    }
+                }
+            }
+        }
+    }
+    let mut in_image: BTreeMap<String, String> = BTreeMap::new();
+    for m in image["methods"].as_array().cloned().unwrap_or_default() {
+        in_image.insert(format!("{}|{}|{}", m["class"].as_str().unwrap_or(""), m["side"].as_str().unwrap_or("instance"), m["selector"].as_str().unwrap_or("")), m["source"].as_str().unwrap_or("").to_string());
+    }
+    let label = |k: &str| { let p: Vec<&str> = k.split('|').collect(); if p[1] == "class" { format!("{} class>>{}", p[0], p[2]) } else { format!("{}>>{}", p[0], p[2]) } };
+    let missing_in_files: Vec<String> = in_image.keys().filter(|k| !in_files.contains_key(*k)).map(|k| label(k)).collect();
+    let missing_in_image: Vec<String> = in_files.keys().filter(|k| !in_image.contains_key(*k)).map(|k| label(k)).collect();
+    let different: Vec<String> = in_image.iter().filter(|(k, v)| in_files.get(*k).map(|f| &normalise(f) != &normalise(v)).unwrap_or(false)).map(|(k, _)| label(k)).collect();
+    let image_classes: Vec<String> = image["classes"].as_array().map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect()).unwrap_or_default();
+    let classes_missing_in_files: Vec<&String> = image_classes.iter().filter(|c| !file_classes.contains(c)).collect();
+    let classes_missing_in_image: Vec<&String> = file_classes.iter().filter(|c| !image_classes.contains(c)).collect();
+    let ok = missing_in_files.is_empty() && missing_in_image.is_empty() && different.is_empty() && classes_missing_in_files.is_empty() && classes_missing_in_image.is_empty();
+    json!({
+        "package": package,
+        "ok": ok,
+        "methods_in_image": in_image.len(),
+        "methods_in_files": in_files.len(),
+        "missing_in_files": missing_in_files,
+        "missing_in_image": missing_in_image,
+        "different": different,
+        "classes_missing_in_files": classes_missing_in_files,
+        "classes_missing_in_image": classes_missing_in_image,
+    })
+}

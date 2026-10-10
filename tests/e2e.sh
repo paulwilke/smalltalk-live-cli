@@ -132,6 +132,49 @@ $S stop --force >/dev/null; $S start >/dev/null
 out=$($S obj show "$OLD"); check "stale reference detected after restart" '.error.code' stale_ref
 out=$($S stop); check "stop needs --force" '.error.code' confirmation_required
 
+# --- 0.6: recording survives a failing test run (suppression is per process)
+$S class create Reg --superclass TestCase --package Demo-Reg >/dev/null
+$S method compile Reg --protocol t - <<< $'testRed\n\tself assert: false' >/dev/null
+$S test run Reg >/dev/null
+$S eval - <<< "Reg compile: 'later ^ 1' classified: 'x'. 1" >/dev/null
+out=$($S changes list); check "eval-made change recorded after a red test left a session behind" '[.result.changes[]|select(.selector=="later")]|length' 1
+$S debug terminate --all >/dev/null
+
+# --- drift / save --verify
+mkdir -p dsrc
+out=$($S save --package Demo-Reg --dir dsrc --verify); check "save --verify reports no drift" '.ok'
+out=$($S drift --package Demo-Reg --dir dsrc); check "drift: image and files agree" '.result.drift' false
+perl -0pi -e 's/\{ #category : .x. \}\nReg >> later \[.*?\n\]\n?//s' dsrc/Demo-Reg/Reg.class.st
+out=$($S drift --package Demo-Reg --dir dsrc); check "drift detects a method missing in the files" '.result.packages[0].missing_in_files|join(",")' 'Reg>>later'
+$S drift --package Demo-Reg --dir dsrc >/dev/null; [ $? -eq 1 ] && { pass=$((pass+1)); echo "ok   - drift exits 1"; } || { fail=$((fail+1)); echo "FAIL - drift exit code"; }
+
+# --- did you mean / truncation hint
+out=$($S eval '12 printString: 5 paddedWith: $0 to: 5' --no-session); check "unknown selector gets suggestions" '[.error.did_you_mean[].selector]|index("printPaddedWith:to:")!=null'
+out=$($S eval '(1 to: 100) asOrderedCollection'); check "truncated print says how to get the rest" '.result.value.hint|contains("obj text")'
+
+# --- stlive run: fresh image, sources from Tonel, clean stdout, UTF-8, args, exit code
+mkdir -p runsrc/RunApp
+printf "Package { #name : 'RunApp' }\n" > runsrc/RunApp/package.st
+cat > runsrc/RunApp/RunGreeter.class.st <<'ST'
+Class {
+	#name : 'RunGreeter',
+	#superclass : 'Object',
+	#package : 'RunApp'
+}
+
+{ #category : 'x' }
+RunGreeter class >> greet: aName [
+	^ 'Grüße, ' , aName , ' (21 °C)'
+]
+ST
+RUNOUT=$($S run --load runsrc --eval "RunGreeter greet: StLiveRun arguments first" -- Welt 2>/dev/null)
+out="{\"v\":\"$RUNOUT\"}"; check "run: result on stdout, UTF-8 intact, args passed" '.v' 'Grüße, Welt (21 °C)'
+RUNOUT=$($S run --load runsrc --eval "Transcript show: 'noise'. Warning signal: 'w'. 42" 2>/dev/null)
+out="{\"v\":\"$RUNOUT\"}"; check "run: stdout carries only the result" '.v' 42
+$S run --eval "StLiveRun exit: 3" >/dev/null 2>&1; [ $? -eq 3 ] && { pass=$((pass+1)); echo "ok   - run passes the exit code through"; } || { fail=$((fail+1)); echo "FAIL - run exit code"; }
+$S run --eval "1 zork" >/dev/null 2>"$WORK/run.err"; RC=$?
+{ [ $RC -eq 1 ] && grep -q "zork" "$WORK/run.err"; } && { pass=$((pass+1)); echo "ok   - run: errors go to stderr with exit code 1"; } || { fail=$((fail+1)); echo "FAIL - run error handling (rc=$RC)"; }
+
 # --- delivery: export an image without the stlive server
 $S start >/dev/null
 $S class create Shipped --package App >/dev/null
