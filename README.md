@@ -103,6 +103,8 @@ Per project, state lives in `./.stlive` (a `.gitignore` inside it is created aut
 
 `stlive init` keeps everything in `~/.stlive` (override with `STLIVE_HOME`). Nothing else is installed.
 
+Two directories matter: the **home** (`STLIVE_HOME`: VM, template image, sources – written by `init`, read by `start` and `run`) and the **state directory** (`STLIVE_DIR` / `--state-dir`: instances, port files, logs; default `./.stlive`). An environment that sets only `STLIVE_DIR` uses that directory as the home as well, so a forgotten `STLIVE_HOME` can never read from or write to `~/.stlive` – the separate environment gets `not_initialized` until you run `stlive init` in it.
+
 ## Use
 
 ```bash

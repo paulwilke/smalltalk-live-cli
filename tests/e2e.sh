@@ -5,6 +5,7 @@ set -u
 S=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
 WORK=$(mktemp -d); cd "$WORK"
 export STLIVE_DIR="$WORK/.stlive"
+export STLIVE_HOME="${STLIVE_HOME:-$HOME/.stlive}"   # the template; STLIVE_DIR alone would be used as home (0.7)
 pass=0; fail=0
 check() { # check <description> <jq filter on $out> [expected]
   local desc=$1 filter=$2 expected=${3:-true}

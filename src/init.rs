@@ -103,9 +103,18 @@ pub fn sources_hash() -> String {
     format!("{:016x}", h)
 }
 
+/// Where the template (VM, image, sources) lives: `STLIVE_HOME`; without it `STLIVE_DIR` (an environment that
+/// sets only the state directory must never read or write `~/.stlive`); otherwise `~/.stlive`.
 pub fn home_dir() -> PathBuf {
-    if let Ok(h) = std::env::var("STLIVE_HOME") {
+    home_dir_from(std::env::var("STLIVE_HOME").ok().as_deref(), std::env::var("STLIVE_DIR").ok().as_deref())
+}
+
+fn home_dir_from(stlive_home: Option<&str>, stlive_dir: Option<&str>) -> PathBuf {
+    if let Some(h) = stlive_home.filter(|s| !s.trim().is_empty()) {
         return PathBuf::from(h);
+    }
+    if let Some(d) = stlive_dir.filter(|s| !s.trim().is_empty()) {
+        return PathBuf::from(d);
     }
     crate::platform::home().join(".stlive")
 }
@@ -274,6 +283,32 @@ pub fn instance_image(template_image: &Path, dest_dir: &Path, name: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_prefers_stlive_home_then_stlive_dir_then_default() {
+        assert_eq!(home_dir_from(Some("/h"), Some("/d")), PathBuf::from("/h"));
+        assert_eq!(home_dir_from(None, Some("/d")), PathBuf::from("/d"));
+        assert_eq!(home_dir_from(Some(""), Some("/d")), PathBuf::from("/d"));
+        assert_eq!(home_dir_from(None, None), crate::platform::home().join(".stlive"));
+        assert_eq!(home_dir_from(None, Some(" ")), crate::platform::home().join(".stlive"));
+    }
+
+    #[test]
+    fn init_with_the_template_base_image_as_source_does_not_truncate_it() {
+        // `stlive init --image <home>/pharo/Pharo.image` (the file init itself would write) must keep the image intact.
+        let home = std::env::temp_dir().join(format!("stlive-init-self-{}", std::process::id()));
+        let pharo = home.join("pharo");
+        std::fs::create_dir_all(&pharo).unwrap();
+        let base = pharo.join("Pharo.image");
+        std::fs::write(&base, b"image bytes").unwrap();
+        std::fs::write(pharo.join("Pharo.changes"), b"changes").unwrap();
+        let vm = pharo.join("no-such-vm");
+        // the VM does not exist, so init fails after the copy step; the base image must still be intact
+        let r = init(&home, false, Some((vm, base.clone())));
+        assert!(r.is_err());
+        assert_eq!(std::fs::read(&base).unwrap(), b"image bytes");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
     #[test]
     fn copy_onto_itself_keeps_the_file() {

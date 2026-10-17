@@ -4,6 +4,7 @@
 set -u
 S=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
 WORK=$(mktemp -d); cd "$WORK"
+export STLIVE_HOME="${STLIVE_HOME:-$HOME/.stlive}"
 pass=0; fail=0
 check() { local desc=$1 filter=$2 expected=${3:-true}; local got; got=$(echo "$out" | jq -r "$filter" 2>/dev/null)
   if [ "$got" = "$expected" ]; then pass=$((pass+1)); echo "ok   - $desc"; else fail=$((fail+1)); echo "FAIL - $desc (got: $got, expected: $expected)"; echo "       $out" | cut -c1-300; fi; }
