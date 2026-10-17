@@ -2,7 +2,8 @@
 # End-to-end test against a real Pharo image. Needs `stlive init` done once, plus jq.
 # Usage: tests/e2e.sh [path/to/stlive]
 set -u
-S=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
+BIN=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
+stlive_bin() { "$BIN" "$@"; }; S=stlive_bin   # the path may contain spaces; $S stays usable unquoted
 WORK=$(mktemp -d); cd "$WORK"
 export STLIVE_DIR="$WORK/.stlive"
 export STLIVE_HOME="${STLIVE_HOME:-$HOME/.stlive}"   # the template; STLIVE_DIR alone would be used as home (0.7)
@@ -184,7 +185,7 @@ STLIVE_LOG="$WORK/all.jsonl" $S drift --all --dir dsrc >/dev/null 2>&1
 out="{\"v\":\"$(jq -r .command "$WORK/all.jsonl" | tr "\n" ",")\"}"; check "run and drift appear in the call log" '.v' "run,drift,"
 
 # --- 0.7: STLIVE_DIR is the home when STLIVE_HOME is unset (a forgotten variable never touches ~/.stlive)
-out=$(env -u STLIVE_HOME STLIVE_DIR="$WORK/empty-state" $S -i nohome start 2>/dev/null); check "without STLIVE_HOME the template comes from STLIVE_DIR" '.error.code' not_initialized
+out=$(env -u STLIVE_HOME STLIVE_DIR="$WORK/empty-state" "$BIN" -i nohome start 2>/dev/null); check "without STLIVE_HOME the template comes from STLIVE_DIR" '.error.code' not_initialized
 [ ! -e "$HOME/.stlive/nohome.config.json" ] && { pass=$((pass+1)); echo "ok   - ~/.stlive untouched"; } || { fail=$((fail+1)); echo "FAIL - ~/.stlive was written"; }
 
 # --- 0.7: inherited test methods (abstract superclass) and skipped tests

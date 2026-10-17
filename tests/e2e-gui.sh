@@ -2,7 +2,8 @@
 # GUI end-to-end test: opens a real Pharo window on your screen. Needs `stlive init` and jq.
 # Usage: tests/e2e-gui.sh [path/to/stlive]
 set -u
-S=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
+BIN=${1:-$(cd "$(dirname "$0")/.." && pwd)/target/release/stlive}
+stlive_bin() { "$BIN" "$@"; }; S=stlive_bin   # the path may contain spaces; $S stays usable unquoted
 WORK=$(mktemp -d); cd "$WORK"
 export STLIVE_HOME="${STLIVE_HOME:-$HOME/.stlive}"
 pass=0; fail=0
