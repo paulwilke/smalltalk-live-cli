@@ -139,14 +139,24 @@ pub fn system_packages(home: &Path) -> Option<Vec<String>> {
     Some(t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
+/// `std::fs::copy`, but a no-op when source and destination are the same file (copying a file onto itself truncates it to 0 bytes).
+fn copy_unless_same(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(src), std::fs::canonicalize(dst)) {
+        if a == b {
+            return Ok(());
+        }
+    }
+    std::fs::copy(src, dst).map(|_| ())
+}
+
 pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Result<Value, String> {
     let pharo_dir = home.join("pharo");
     std::fs::create_dir_all(&pharo_dir).map_err(|e| e.to_string())?;
 
     // 1. Pharo 13 VM + base image: a local Pharo (--vm/--image) or get.pharo.org
     if let Some((lvm, limg)) = &local {
-        std::fs::copy(limg, pharo_dir.join("Pharo.image")).map_err(|e| format!("{}: {}", limg.display(), e))?;
-        let _ = std::fs::copy(limg.with_extension("changes"), pharo_dir.join("Pharo.changes"));
+        copy_unless_same(limg, &pharo_dir.join("Pharo.image")).map_err(|e| format!("{}: {}", limg.display(), e))?;
+        let _ = copy_unless_same(&limg.with_extension("changes"), &pharo_dir.join("Pharo.changes"));
         // the sources file must sit next to the image
         if let Ok(rd) = std::fs::read_dir(limg.parent().unwrap()) {
             for e in rd.flatten() {
@@ -259,4 +269,26 @@ pub fn instance_image(template_image: &Path, dest_dir: &Path, name: &str) -> Res
         }
     }
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_onto_itself_keeps_the_file() {
+        let dir = std::env::temp_dir().join(format!("stlive-init-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("Pharo.image");
+        std::fs::write(&f, b"image bytes").unwrap();
+        copy_unless_same(&f, &f).unwrap();
+        // the same file reached through another path (dir/./Pharo.image)
+        copy_unless_same(&dir.join(".").join("Pharo.image"), &f).unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"image bytes");
+        // different files are still copied
+        let g = dir.join("copy.image");
+        copy_unless_same(&f, &g).unwrap();
+        assert_eq!(std::fs::read(&g).unwrap(), b"image bytes");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
