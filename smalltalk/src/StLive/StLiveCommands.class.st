@@ -982,18 +982,61 @@ StLiveCommands >> cmdChangesShow: args [
 ]
 
 { #category : 'tests' }
+StLiveCommands >> suiteTests: aSuite into: aCollection [
+	aSuite tests do: [ :t |
+		(t isKindOf: TestSuite)
+			ifTrue: [ self suiteTests: t into: aCollection ]
+			ifFalse: [ aCollection add: t ] ]
+]
+
+{ #category : 'tests' }
+StLiveCommands >> testCasesOf: aTestClass [
+	"The TestCase objects exactly as SUnit's `buildSuite` runs them: inherited test methods of an abstract
+	superclass are included, an abstract class contributes the suites of its concrete subclasses, and a
+	ParametrizedTestCase yields one case per parameter combination (each case carries its parameters)."
+	| list |
+	list := OrderedCollection new.
+	self suiteTests: aTestClass buildSuite into: list.
+	^ list asArray
+]
+
+{ #category : 'tests' }
+StLiveCommands >> parameterLabelOf: aTestCase [
+	"'(#n->1)' for a parametrized case, '' otherwise."
+	^ [ ((aTestCase respondsTo: #parametersToUse) and: [ aTestCase parametersToUse notNil and: [ aTestCase parametersToUse notEmpty ] ])
+		ifTrue: [ String streamContents: [ :s | aTestCase parametersToUse printElementsOn: s ] ]
+		ifFalse: [ '' ] ] on: Error do: [ :e | '' ]
+]
+
+{ #category : 'tests' }
+StLiveCommands >> testIdOf: aTestCase [
+	"'Class>>selector', for a parametrized case 'Class>>selector (#n->1)'."
+	| label |
+	label := self parameterLabelOf: aTestCase.
+	^ aTestCase class name , '>>' , aTestCase selector , (label isEmpty ifTrue: [ '' ] ifFalse: [ ' ' , label ])
+]
+
+{ #category : 'tests' }
 StLiveCommands >> testsFor: target [
-	"Answer an array of { testClass. selector } pairs."
+	"Answer an array of TestCase objects ready to run (see testCasesOf:)."
 	| parts cls pkg classes |
 	(target includesSubstring: '>>') ifTrue: [
+		| rest sel label cases |
 		parts := target splitOn: '>>'.
 		cls := self classNamed: parts first.
-		^ { { cls. (parts second trimBoth copyWithout: $#) asSymbol } } ].
+		rest := parts second trimBoth.
+		sel := ((rest copyUpTo: $ ) copyWithout: $#) asSymbol.
+		label := (rest includes: $ ) ifTrue: [ (rest copyAfter: $ ) trimBoth ] ifFalse: [ '' ].
+		"all parameter combinations of that selector (or the one named by its label), also from concrete subclasses of an abstract class"
+		cases := (self testCasesOf: cls) select: [ :t | t selector == sel and: [ label isEmpty or: [ (self parameterLabelOf: t) = label ] ] ].
+		^ cases isEmpty ifTrue: [ { cls selector: sel } ] ifFalse: [ cases ] ].
 	cls := Smalltalk globals at: target asSymbol ifAbsent: [ nil ].
 	cls isBehavior ifTrue: [
+		| cases |
 		(cls inheritsFrom: TestCase) ifFalse: [ self fail: 'not_a_test' message: target , ' is not a TestCase' ].
-		cls testSelectors isEmpty ifTrue: [ self fail: 'no_tests' message: cls name , ' has no test methods (abstract or only inherited helpers)' ].
-		^ cls testSelectors collect: [ :s | { cls. s } ] ].
+		cases := self testCasesOf: cls.
+		cases isEmpty ifTrue: [ self fail: 'no_tests' message: cls name , ' has no test methods (abstract without concrete subclasses, or only helpers)' ].
+		^ cases ].
 	pkg := PackageOrganizer default packageNamed: target ifAbsent: [ nil ].
 	classes := pkg
 		ifNotNil: [ pkg definedClasses ]
@@ -1003,7 +1046,7 @@ StLiveCommands >> testsFor: target [
 		| similar |
 		similar := (Smalltalk globals allClasses select: [ :c | c isTestCase and: [ c isAbstract not and: [ (c name asLowercase includesSubstring: target asLowercase) ] ] ]) collect: [ :c | c name ].
 		self fail: 'no_tests' message: 'No test class, test or package matches ' , target , (similar isEmpty ifTrue: [ ' (see: stlive test list <pattern>)' ] ifFalse: [ '. Similar test classes: ' , (similar first: (8 min: similar size)) asArray printString ]) ].
-	^ classes asSortedCollection: [ :a :b | a name <= b name ]; flatCollect: [ :c | c testSelectors collect: [ :s | { c. s } ] ]
+	^ classes asSortedCollection: [ :a :b | a name <= b name ]; flatCollect: [ :c | self testCasesOf: c ]
 ]
 
 { #category : 'tests' }
@@ -1036,21 +1079,36 @@ StLiveCommands >> failureRecord: err test: testId [
 ]
 
 { #category : 'tests' }
+StLiveCommands >> endTestSession: record [
+	"End the debug session of a failing test right away (it is not the representative of its group)."
+	| id |
+	id := record at: 'session' ifAbsent: [ nil ].
+	id ifNil: [ ^ self ].
+	(server sessions at: id ifAbsent: [ nil ]) ifNotNil: [ :s | server terminateSession: s ].
+	record at: 'session' put: nil.
+	record at: 'session_ended' put: true
+]
+
+{ #category : 'tests' }
 StLiveCommands >> groupFailures: records keep: keep discard: discard [
-	"Group by signature (same exception type, message modulo digits, same application frame)."
+	"Group by signature (same exception type, message modulo digits, same application frame). Sessions were
+	already reduced to one representative per group while the tests ran (see cmdTestRun:); sessions evicted
+	meanwhile (the image keeps at most 60) are simply reported as ended."
 	| groups ordered |
 	groups := OrderedDictionary new.
 	records do: [ :r | (groups at: (r at: 'signature') ifAbsentPut: [ OrderedCollection new ]) add: r ].
 	ordered := groups values asSortedCollection: [ :x :y | x size > y size ].
 	^ ordered asArray withIndexCollect: [ :members :i |
-		| first sessions kept |
+		| first kept ended |
 		first := members first.
-		sessions := members collect: [ :r | r at: 'session' ] thenSelect: #notNil.
 		kept := OrderedCollection new.
-		sessions withIndexDo: [ :id :n |
-			(discard not and: [ keep or: [ n = 1 ] ])
+		ended := 0.
+		members do: [ :r |
+			| id |
+			id := r at: 'session' ifAbsent: [ nil ].
+			(id notNil and: [ (server sessions at: id ifAbsent: [ nil ]) ifNil: [ false ] ifNotNil: [ :s | s isSuspended ] ])
 				ifTrue: [ kept add: id ]
-				ifFalse: [ server terminateSession: (server sessionFor: id) ] ].
+				ifFalse: [ ended := ended + 1 ] ].
 		self m: {
 			'group' -> i.
 			'count' -> members size.
@@ -1062,7 +1120,7 @@ StLiveCommands >> groupFailures: records keep: keep discard: discard [
 			'tests' -> ((members first: (30 min: members size)) collect: [ :r | r at: 'test' ]).
 			'tests_truncated' -> (members size > 30).
 			'sessions' -> kept asArray.
-			'sessions_ended' -> (sessions size - kept size) } ]
+			'sessions_ended' -> ended } ]
 ]
 
 { #category : 'tests' }
@@ -1079,12 +1137,16 @@ StLiveCommands >> cmdTestList: args [
 		'total' -> found size.
 		'truncated' -> (found size > limit).
 		'test_classes' -> ((found asArray first: (limit min: found size)) collect: [ :c |
-			self m: { 'name' -> c name. 'package' -> ([ c package name ] on: Error do: [ :e | nil ]). 'tests' -> c testSelectors size } ]) })
+			self m: { 'name' -> c name. 'package' -> ([ c package name ] on: Error do: [ :e | nil ]). 'tests' -> ([ (self testCasesOf: c) size ] on: Error do: [ :e | c testSelectors size ]) } ]) })
 ]
 
 { #category : 'tests' }
 StLiveCommands >> cmdTestRun: args [
-	| target tests timeout passed records started keep discard groups |
+	"Run tests one by one in their own jobs. A failing test leaves a debug session; only the first session of each
+	failure group is kept (keep_sessions keeps all, discard_sessions none) - the others end immediately, so a run
+	with hundreds of red tests never evicts the sessions it reports. Skipped tests (`self skip`) are counted
+	separately and are neither passed nor failed. A ParametrizedTestCase runs once per parameter combination."
+	| target tests timeout passed records started keep discard groups skipped representative |
 	target := self need: 'target' in: args.
 	timeout := self int: 'timeout' in: args default: 10000.
 	keep := (args at: 'keep_sessions' ifAbsent: [ false ]) == true.
@@ -1093,26 +1155,43 @@ StLiveCommands >> cmdTestRun: args [
 	tests := self testsFor: target.
 	passed := 0.
 	records := OrderedCollection new.
+	skipped := OrderedCollection new.
+	representative := Dictionary new.
 	started := Time millisecondClockValue.
-	tests do: [ :pair |
-		| cls sel response testId |
-		cls := pair first.
-		sel := pair second.
-		testId := cls name , '>>' , sel.
+	tests do: [ :testCase |
+		| response testId skipReason |
+		testId := self testIdOf: testCase.
+		skipReason := nil.
 		response := self
-			runBlock: [ server suppressRecordingDuring: [ (cls selector: sel) runCase ] ]
+			runBlock: [ server suppressRecordingDuring: [
+				[ testCase runCase ]
+					on: TestSkipped
+					do: [ :s | skipReason := [ s messageText asString ] on: Error do: [ :e | '' ]. s return: nil ] ] ]
 			origin: (self originCmd: 'test.run' args: (self m: { 'target' -> testId. 'timeout' -> timeout }))
 			timeout: timeout
 			mode: 'first'.
 		(response at: 'ok')
-			ifTrue: [ passed := passed + 1 ]
-			ifFalse: [ records add: (self failureRecord: (response at: 'error') test: testId) ] ].
+			ifTrue: [ skipReason ifNil: [ passed := passed + 1 ] ifNotNil: [ skipped add: testId ] ]
+			ifFalse: [
+				| record sig |
+				record := self failureRecord: (response at: 'error') test: testId.
+				records add: record.
+				sig := record at: 'signature'.
+				discard
+					ifTrue: [ self endTestSession: record ]
+					ifFalse: [
+						keep ifFalse: [
+							(representative includesKey: sig)
+								ifTrue: [ self endTestSession: record ]
+								ifFalse: [ (record at: 'session') ifNotNil: [ :id | representative at: sig put: id ] ] ] ] ] ].
 	groups := self groupFailures: records keep: keep discard: discard.
 	^ self ok: (self m: {
 		'target' -> target.
 		'ran' -> tests size.
 		'passed' -> passed.
 		'failed' -> records size.
+		'skipped' -> skipped size.
+		'skipped_tests' -> ((skipped first: (50 min: skipped size)) asArray).
 		'duration_ms' -> (Time millisecondClockValue - started).
 		'groups' -> groups })
 ]

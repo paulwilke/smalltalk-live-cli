@@ -349,6 +349,9 @@ enum TestCmd {
         /// End all sessions of this run, including the representative one per group
         #[arg(long)]
         discard_sessions: bool,
+        /// Exit with 1 when tests were skipped (`self skip`), for projects whose policy treats skips as failures
+        #[arg(long)]
+        skips_fail: bool,
     },
 }
 
@@ -710,12 +713,22 @@ fn write_log(path: &Path, tag: Option<&str>, instance: &str, cmd: &str, summary:
     }
 }
 
+/// `test run --skips-fail`: skipped tests count as failures for the exit code.
+static SKIPS_FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn exit_code_for(resp: &Value) -> i32 {
+    exit_code_with(resp, SKIPS_FAIL.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn exit_code_with(resp: &Value, skips_fail: bool) -> i32 {
     if resp["ok"] != json!(true) {
         return 1;
     }
-    // A test run with failures is a failed run for shell scripts.
+    // A test run with failures is a failed run for shell scripts; skipped tests only with --skips-fail.
     if resp["result"]["failed"].as_u64().unwrap_or(0) > 0 {
+        return 1;
+    }
+    if skips_fail && resp["result"]["skipped"].as_u64().unwrap_or(0) > 0 {
         return 1;
     }
     0
@@ -1148,14 +1161,15 @@ fn main() {
             opt(&mut m, "limit", limit);
             ("find.package".into(), Value::Object(m), None)
         }
-        Cmd::Test(TestCmd::Run { target, timeout, keep_sessions, discard_sessions }) => {
+        Cmd::Test(TestCmd::Run { target, timeout, keep_sessions, discard_sessions, skips_fail }) => {
             let mut m = Map::new();
             m.insert("target".into(), target.into());
             opt(&mut m, "timeout", timeout);
             if keep_sessions { m.insert("keep_sessions".into(), true.into()); }
             if discard_sessions { m.insert("discard_sessions".into(), true.into()); }
-            // the timeout is per test; allow a generous overall budget for the connection
-            ("test.run".into(), Value::Object(m), Some(timeout.unwrap_or(10_000) * 20))
+            SKIPS_FAIL.store(skips_fail, std::sync::atomic::Ordering::Relaxed);
+            // the timeout is per test; the socket budget is for the whole run (large suites take minutes)
+            ("test.run".into(), Value::Object(m), Some((timeout.unwrap_or(10_000) * 20).max(600_000)))
         }
         Cmd::Debug(d) => match d {
             DebugCmd::List { all } => ("debug.list".into(), json!({"all": all}), None),
@@ -1238,8 +1252,30 @@ fn main() {
     if cmd == "changes.show" {
         add_diff(&mut resp);
     }
+    if cmd == "test.run" && SKIPS_FAIL.load(std::sync::atomic::Ordering::Relaxed) && resp["result"]["skipped"].as_u64().unwrap_or(0) > 0 {
+        resp["result"]["skips_fail"] = json!(true);
+        resp["result"]["note"] = json!("Skipped tests count as failures (--skips-fail): exit code 1.");
+    }
     emit(&resp, pretty);
     std::process::exit(exit_code_for(&resp));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skipped_tests_fail_only_with_the_flag() {
+        let green = json!({"ok": true, "result": {"ran": 3, "passed": 2, "failed": 0, "skipped": 1}});
+        assert_eq!(exit_code_with(&green, false), 0);
+        assert_eq!(exit_code_with(&green, true), 1);
+        let red = json!({"ok": true, "result": {"ran": 3, "passed": 2, "failed": 1}});
+        assert_eq!(exit_code_with(&red, false), 1);
+        // an old image that does not report `skipped` at all
+        let old = json!({"ok": true, "result": {"ran": 3, "passed": 3, "failed": 0}});
+        assert_eq!(exit_code_with(&old, true), 0);
+        assert_eq!(exit_code_with(&json!({"ok": false, "error": {}}), false), 1);
+    }
 }
 
 /// Open `url` in a chromeless application window (Chrome/Edge `--app=`), the web-UI way of "developing a window".
