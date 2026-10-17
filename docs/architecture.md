@@ -32,10 +32,21 @@ A frame is `stale` when the method it runs is no longer the one installed in its
 A per-job `Transcript` tee captures text written by the worker; `Deprecation` warnings are collected and counted instead of cluttering output. Stacks are cut at the job boundary so tooling frames never appear; they are walked at most 100 000 deep.
 
 ## Writing back (`save`)
-The image records every change made through the CLI (`changes.pending`). The CLI patches Tonel files per method (replace in place, append new, remove), detects the symbol/string Tonel style of the target directory, and marks changes as saved. Methods compiled with a `*Package` protocol become `Class.extension.st`.
+The image records every change made through the CLI (`changes.pending`). The CLI patches Tonel files per method (replace in place, append new, remove), detects the symbol/string Tonel style of the target directory, and marks changes as saved. Methods compiled with a `*Package` protocol become `Class.extension.st`. Traits go to `Name.trait.st` (class side as `Name classSide >> sel`); a method a class obtains from a trait belongs to the trait's file only, so `package.methods` (used by `drift`) lists locally defined methods and the recorder skips trait-propagated ones.
+
+## Tests
+`test run` takes the TestCase objects of SUnit's `buildSuite` (inherited tests, abstract classes, one case per parameter combination of a `ParametrizedTestCase`), runs each in its own job and groups failures by signature (exception type, message without digits, first application frame). The image keeps at most 60 sessions, so a session that is not the representative of its group ends as soon as the test's record exists; `TestSkipped` is handled inside the job and reported as `skipped`.
+
+## Loading (`load`)
+Metacello is run in a job (failures become sessions). Two things Pharo would not do on its own: the `BaselineOf` package is reloaded from the repository first when its class already exists (Metacello skips it), and Monticello's "unsaved changes in the image – merge, load or cancel?" question is answered with *load* (the files win; the superseded recorded changes are marked saved).
+
+## Background errors
+Pharo's default error handler for processes without their own (`ErrorHandler defaultErrorHandler`, the NonInteractiveUIManager in a headless image) quits the image. While the server runs, `StLiveBackgroundErrorHandler` takes that place: it records the error (`StLiveServer>>backgroundErrors`, shown by `image info`), prints it with ten frames to the instance log and terminates only the failing process. Jobs are unaffected (their processes have `StLiveErrorHandler`), and a GUI image keeps the Morphic manager (debugger).
 
 ## Layout
-`src/` Rust client (`main.rs`, `save.rs`, `init.rs`) · `smalltalk/src/StLive` server (Commands, Server, Job, Session, ErrorHandler, Describer, TranscriptTee, Failure) · `tests/e2e.sh` · `skill/` agent instructions.
+`src/` Rust client (`main.rs`, `save.rs`, `init.rs`) · `smalltalk/src/StLive` server (Commands, Server, Job, Session, ErrorHandler, BackgroundErrorHandler, Describer, TranscriptTee, Failure) · `tests/e2e.sh` · `skill/` agent instructions.
+
+Directories: `STLIVE_HOME` holds the template (VM, image, sources; default `~/.stlive`, or `STLIVE_DIR` when only that is set), `STLIVE_DIR`/`--state-dir` the instances (default `./.stlive`).
 
 ## GUI mode and the UI process
 `start --gui` only omits `--headless`; the server is the same. What changes is who may touch live Morphic/Spec objects:

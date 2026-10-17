@@ -556,7 +556,7 @@ Usage: stlive class [OPTIONS] <COMMAND>
 
 Commands:
   show    Hierarchy, variables, methods ('Foo' or 'Foo class')
-  create  Create (or redefine) a class
+  create  Create (or redefine) a class, or a trait with --trait
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -594,7 +594,7 @@ Options:
 ### `stlive class create`
 
 ```
-Create (or redefine) a class
+Create (or redefine) a class, or a trait with --trait
 
 Usage: stlive class create [OPTIONS] <NAME>
 
@@ -608,12 +608,14 @@ Options:
       --state-dir <STATE_DIR>      Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --package <PACKAGE>          
       --pretty                     Pretty-print JSON
-      --class-ivars <CLASS_IVARS>  Instance variables on the class side (space separated)
       --log <LOG>                  Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
-      --class-vars <CLASS_VARS>    Class variables (space separated)
+      --trait                      Create a trait instead of a class (Tonel: Name.trait.st)
       --tag <TAG>                  Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
-      --comment <COMMENT>          Class comment
+      --traits <TRAITS>            Trait composition the class uses, e.g. 'TFoo + TBar'
+      --class-ivars <CLASS_IVARS>  Instance variables on the class side (space separated)
       --text                       Human-readable indented text instead of JSON (exit codes are unchanged)
+      --class-vars <CLASS_VARS>    Class variables (space separated)
+      --comment <COMMENT>          Class comment
   -h, --help                       Print help
 ```
 
@@ -847,6 +849,7 @@ Options:
       --discard-sessions       End all sessions of this run, including the representative one per group
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --skips-fail             Exit with 1 when tests were skipped (`self skip`), for projects whose policy treats skips as failures
       --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                   Print help

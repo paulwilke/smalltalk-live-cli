@@ -136,10 +136,10 @@ An image started by an older version of this tool (or any server that speaks the
 | Area | Commands |
 |---|---|
 | Window | `start --gui`, `eval/compile --ui`, `ui windows\|screenshot\|press`, `open-ui` |
-| Image | `init` (`--vm`/`--image` for a local Pharo), `attach`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` |
+| Image | `init` (`--vm`/`--image` for a local Pharo), `attach`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` (re-loading updates loaded packages – also ones modified in the image – and the baseline itself) |
 | Evaluate | `eval` (stdin with `-`, `--in <ref>` as receiver, `--timeout`, `--full` complete text, `--no-session`; Transcript and deprecations reported separately) |
-| Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment), `method show\|compile\|remove`, `package list`, `changes list\|show\|watch` |
-| Tests | `test list`, `test run` (per test isolation, failures **grouped by cause**, one session kept per group) |
+| Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment, `--trait`, `--traits`), `method show\|compile\|remove`, `package list`, `changes list\|show\|watch` |
+| Tests | `test list`, `test run` (what SUnit's `buildSuite` runs – inherited tests and every parameter combination of a `ParametrizedTestCase` included; per test isolation, failures **grouped by cause**, one session kept per group; `skipped` counted separately, `--skips-fail` makes them fail) |
 | Objects | `obj show\|items\|var\|text\|compare\|referrers\|graph\|release` – paged, with stable references; `graph` marks cycles and shared nodes |
 | Debugging | `debug list\|inspect\|frames\|frame\|locals\|receiver\|eval\|resume\|restart\|return\|rerun\|terminate` |
 | Run / verify | `run --load src --eval … -- args` (fresh image, clean stdout, exit codes), `drift`, `save --verify` |
@@ -157,7 +157,7 @@ The delivered image contains your application but no stlive classes and no evalu
 
 ## Status and what is still open
 
-**Works and is tested** (52 headless + 19 GUI end-to-end checks on macOS arm64, Pharo 13): the whole debug loop, tests, Tonel write-back, eval-made change recording, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses.
+**Works and is tested** (102 headless + 19 GUI end-to-end checks and 9 Rust unit tests on macOS arm64, Pharo 13): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
 
 **Open / not yet verified:**
 - Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
@@ -175,6 +175,7 @@ Short version: this is a CLI because a shell is the one integration point every 
 - The server listens on `127.0.0.1` only, on an ephemeral port published in the instance's state directory. There is **no authentication**: anyone who can connect to that local port can execute arbitrary Smalltalk in the image. Treat it like a local dev REPL, not a service.
 - Destructive operations (`stop`, `method remove`) need `--force`. Output is bounded everywhere; endless loops become sessions after `--timeout` instead of hanging.
 - References and sessions carry the image's run id, so they are rejected as `stale_ref` after a restart rather than silently pointing at something else.
+- `load` lets the files win: a package that was modified in the image (methods compiled through stlive) is overwritten by a re-load and its unsaved recorded changes are marked superseded, so a later `save` cannot resurrect them. Save first if you want to keep such changes.
 
 ## Limitations
 
@@ -183,14 +184,16 @@ Short version: this is a CLI because a shell is the one integration point every 
 - Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).
 - No single-stepping (`step into/over`) yet; sessions can be restarted per frame, resumed, or have a frame return a value.
-- `save` knows classes, instance/class-side methods, extensions and removals of methods; it never rewrites an existing class definition, and does not handle traits, class-variable changes or comments.
+- `save` knows classes, traits, instance/class-side methods, extensions and removals of methods, and updates the variable lists (`#instVars`, `#classVars`, `#classInstVars`) of an existing definition while keeping its other lines (`#traits`, `#classTraits`, `#category`); it does not rewrite a changed superclass, trait composition or comment of an existing class.
+- A headless image no longer quits on an unhandled error in a process that is not an stlive job (a forked process of your application): the error is logged (instance log, `image info` → `background_errors`) and only that process ends. In GUI mode Pharo's debugger opens as usual.
 - Endless recursion is reported as a repeating pattern of the top frames; the starting call is deep below the 100 000-frame inspection cap.
 
 ## Development
 
 ```bash
 cargo build --release
-./tests/e2e.sh          # needs `stlive init` once; ~30 s; starts its own image in a temp dir
+cargo test --release
+./tests/e2e.sh          # needs `stlive init` once; ~2 min; starts its own image in a temp dir (STLIVE_HOME names the template, default ~/.stlive)
 ./scripts/gen-reference.sh
 ```
 

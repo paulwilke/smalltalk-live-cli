@@ -12,21 +12,23 @@ Every command prints JSON: `{"ok":true,"result":...}` or `{"ok":false,"error":..
 stlive init                                   # once per machine: Pharo 13 + image with the server (~/.stlive)
 stlive start                                  # in the project directory; state in ./.stlive
 stlive load <Baseline> --repository tonel://$PWD/src --group Tests     # Metacello; reports new packages
-stlive image info                             # version, loaded packages, unsaved changes, sessions
+stlive image info                             # version, loaded packages, unsaved changes, sessions, background errors
 ```
-`--instance NAME` runs several images side by side. References (`obj-…`) and sessions (`dbg-…`) die with the image process (`stale_ref` after a restart).
+`--instance NAME` runs several images side by side. References (`obj-…`) and sessions (`dbg-…`) die with the image process (`stale_ref` after a restart). `STLIVE_HOME` is the template directory (VM, image), `STLIVE_DIR` the instance state; with only `STLIVE_DIR` set, it is both – a separate environment never touches `~/.stlive`.
+
+Re-running `load` after editing files updates the loaded packages: packages changed in the image are overwritten by the files (`modified_packages_overwritten`, their unsaved recorded changes are dropped as superseded – `save` first if you want to keep them) and a changed baseline is picked up (`baseline_package: reloaded`).
 
 ## The loop
 1. **Reproduce** with `eval` or `test run`. A failure is not a tool error: it becomes a **debug session** that keeps the stack alive.
    - `stlive eval '<code>'` (`-` reads stdin; `--timeout ms` turns endless loops into a session; `--in <ref>` sets `self`). Result: `result.value.{class,print,ref}`, `result.output.{transcript,deprecations}`. Failure: `error.{type,message,session,first_application_frame}` (and `error.recursion` for endless recursion).
-   - `stlive test run <TestClass | Class>>test | Package>` → `result.{ran,passed,failed}` and `result.groups[]` (failures grouped by cause, first application frame, one representative session each). `stlive test list <glob>` finds test classes.
+   - `stlive test run <TestClass | Class>>test | Package>` → `result.{ran,passed,failed,skipped}` and `result.groups[]` (failures grouped by cause, first application frame, one representative session each). It runs what SUnit runs: inherited test methods of an abstract superclass included, an abstract class runs its concrete subclasses, a `ParametrizedTestCase` once per parameter combination (reported as `Class>>sel (#param->value)`; that string is also a valid target). Skipped tests (`self skip`) are listed in `skipped_tests` and are neither passed nor failed; `--skips-fail` makes the exit code 1 when any test was skipped (use it when the project's policy says skips are failures). `stlive test list <glob>` finds test classes.
 2. **Navigate in small steps** (never print the whole stack):
    - `debug frames <session> --limit 5` → `origin` is application/framework/eval; start at `first_application_frame`.
    - `debug frame <session> <n> [--no-source]` → executing statement, receiver, variables with `kind` (argument, temporary, block_argument, block_temporary, outer_block_*).
    - `debug eval <session> --frame <n> '<expr>'` evaluates with that frame's variables visible – prefer experiments over guessing.
    - `debug receiver <session> --frame n`, `obj show|items|var|text|compare <ref>` follow references; collections and long strings are paged.
 3. **Understand the code**: `method show 'Class>>selector'`, `class show Foo`, `find implementors|senders <selector>`, `find class '<glob>'`, `package list '<glob>'`.
-4. **Hypothesis → small experiment → change the method**: `method compile ClassName - <<'EOF' … EOF` (also `--file`, `--source`). An existing method keeps its protocol; a NEW method needs `--protocol <name>` (`'*Pkg'` for an extension of package Pkg). The result lists `stale_frames`: suspended executions still running the old code.
+4. **Hypothesis → small experiment → change the method**: `method compile ClassName - <<'EOF' … EOF` (also `--file`, `--source`). An existing method keeps its protocol; a NEW method needs `--protocol <name>` (`'*Pkg'` for an extension of package Pkg). The result lists `stale_frames`: suspended executions still running the old code. Trait methods: compile them into the trait (`method compile TFoo …`, class side `'TFoo classSide'`), not into a class that uses the trait – `save` writes them to `TFoo.trait.st`. `class create --trait TFoo`, `class create Foo --traits 'TFoo + TBar'`.
 5. **Re-run correctly.** `debug resume` continues the OLD execution and proves nothing. Use `debug rerun <session>` (fresh execution of the original operation with the current code) or `debug restart <session> --frame n` (only when restarting that frame is semantically right). Then run the tests.
 6. **Verify**: write a regression test, **see it fail first** (`test run`), then pass after the fix; also run neighbouring tests. Check the restored objects, not only a green bar. If a test fails because its *expectation* is wrong, correct the test; open a debug session only when the code behaves unexpectedly.
 7. **Persist**: changes made through the CLI live only in the image. `changes list|show` (unified diff), then `save --package <Pkg> --dir <repo>/src [--dry-run]` or `save --all --dir <repo>/src`. Packages come from `changes list` (`unsaved_by_package`) or a frame's `package`. Check `git diff` – it should be minimal – and commit with git.
@@ -75,6 +77,8 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead �
 - `--log file --tag name` records a call log (metadata plus a 60-character summary). `changes watch` streams new changes.
 - Edits made with `eval` (`compile:`, new instance variables, ...) are recorded too and included by `save`.
 - `image stop`/`stop --force` and `method remove --force` are destructive – only when asked.
+- An unhandled error in a process your program forked does not end the headless image: it is logged in the instance log and listed by `image info` under `background_errors` (type, message, ten frames); only that process was terminated. Check it when something that runs in the background stops working.
+- Many red tests: the image keeps at most 60 debug sessions; `test run` keeps one per failure group and reports the rest as `sessions_ended`. Use `--keep-sessions` only for small runs.
 
 ## Report
 State the cause, the minimal diff, which tests ran (counts), and what you could not verify.

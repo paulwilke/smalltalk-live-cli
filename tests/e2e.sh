@@ -183,6 +183,92 @@ STLIVE_LOG="$WORK/all.jsonl" STLIVE_TAG=e2e $S run --eval 1 >/dev/null 2>&1
 STLIVE_LOG="$WORK/all.jsonl" $S drift --all --dir dsrc >/dev/null 2>&1
 out="{\"v\":\"$(jq -r .command "$WORK/all.jsonl" | tr "\n" ",")\"}"; check "run and drift appear in the call log" '.v' "run,drift,"
 
+# --- 0.7: STLIVE_DIR is the home when STLIVE_HOME is unset (a forgotten variable never touches ~/.stlive)
+out=$(env -u STLIVE_HOME STLIVE_DIR="$WORK/empty-state" $S -i nohome start 2>/dev/null); check "without STLIVE_HOME the template comes from STLIVE_DIR" '.error.code' not_initialized
+[ ! -e "$HOME/.stlive/nohome.config.json" ] && { pass=$((pass+1)); echo "ok   - ~/.stlive untouched"; } || { fail=$((fail+1)); echo "FAIL - ~/.stlive was written"; }
+
+# --- 0.7: inherited test methods (abstract superclass) and skipped tests
+$S class create AbstractThingTest --superclass TestCase --package Demo-Tests >/dev/null
+$S method compile 'AbstractThingTest class' --protocol t - <<< $'isAbstract\n\t^ self == AbstractThingTest' >/dev/null
+$S method compile AbstractThingTest --protocol t - <<< $'testInherited\n\tself assert: self thing > 0' >/dev/null
+$S method compile AbstractThingTest --protocol t - <<< $'thing\n\t^ self subclassResponsibility' >/dev/null
+$S class create ConcreteThingTest --superclass AbstractThingTest --package Demo-Tests >/dev/null
+$S method compile ConcreteThingTest --protocol t - <<< $'thing\n\t^ 1' >/dev/null
+$S method compile ConcreteThingTest --protocol t - <<< $'testOwn\n\tself assert: true' >/dev/null
+$S method compile ConcreteThingTest --protocol t - <<< $'testSkipped\n\tself skip: \'not today\'' >/dev/null
+out=$($S test run ConcreteThingTest); check "inherited test runs, skip counted separately" '[.result.ran,.result.passed,.result.failed,.result.skipped]|join(",")' "3,2,0,1"
+check "skipped tests are named" '.result.skipped_tests[0]' 'ConcreteThingTest>>testSkipped'
+out=$($S test run AbstractThingTest); check "abstract class runs its concrete subclasses" '.result.ran' 3
+out=$($S test list 'Demo-Tests'); check "test list counts what SUnit runs" '.result.test_classes[0].tests' 3
+$S test run ConcreteThingTest >/dev/null; [ $? -eq 0 ] && { pass=$((pass+1)); echo "ok   - skips do not fail the run by default"; } || { fail=$((fail+1)); echo "FAIL - skip exit code without flag"; }
+$S test run ConcreteThingTest --skips-fail >/dev/null; [ $? -eq 1 ] && { pass=$((pass+1)); echo "ok   - --skips-fail exits 1"; } || { fail=$((fail+1)); echo "FAIL - --skips-fail exit code"; }
+
+# --- 0.7: a ParametrizedTestCase runs once per parameter combination, reported per case
+$S class create ParamDemoTest --superclass ParametrizedTestCase --ivars n --package Demo-Tests >/dev/null
+$S method compile 'ParamDemoTest class' --protocol t - <<< $'testParameters\n\t^ ParametrizedTestMatrix new forSelector: #n addOptions: #(1 2 3); yourself' >/dev/null
+$S method compile ParamDemoTest --protocol t - <<< $'n: aNumber\n\tn := aNumber' >/dev/null
+$S method compile ParamDemoTest --protocol t - <<< $'testEven\n\tself assert: n even' >/dev/null
+$S method compile ParamDemoTest --protocol t - <<< $'testPositive\n\tself assert: n > 0' >/dev/null
+out=$($S test run ParamDemoTest); check "parametrized: every combination runs" '[.result.ran,.result.passed,.result.failed]|join(",")' "6,4,2"
+check "parametrized: cases are reported with their parameters" '[.result.groups[].tests[]]|sort|join(";")' "ParamDemoTest>>testEven (#n->1);ParamDemoTest>>testEven (#n->3)"
+out=$($S test run 'ParamDemoTest>>testEven'); check "Class>>selector runs all combinations of that selector" '.result.ran' 3
+out=$($S test run 'ParamDemoTest>>testEven (#n->3)'); check "one combination can be addressed (and re-run)" '[.result.ran,.result.failed]|join(",")' "1,1"
+PSESS=$(echo "$out" | jq -r '.result.groups[0].sessions[0]')
+out=$($S debug rerun "$PSESS"); check "rerun of a parametrized case keeps its parameters" '[.result.groups[].tests[]]|join(";")' "ParamDemoTest>>testEven (#n->3)"
+out=$($S test list ParamDemo); check "test list counts parametrized cases" '.result.test_classes[0].tests' 6
+
+# --- 0.7: more failing tests than the image keeps sessions for
+$S class create ManyRed --superclass TestCase --package Demo-Tests >/dev/null
+$S eval --no-session - <<< "1 to: 70 do: [ :i | ManyRed compile: 'testRed' , i printString , ' self assert: ' , i printString , ' > 1000' classified: 't' ]. 1" >/dev/null
+out=$($S test run ManyRed); check "70 failing tests: run completes" '[.ok,.result.failed]|join(",")' "true,70"
+out=$($S debug list); check "at most 60 sessions kept" '.result.sessions|length<=60'
+out=$($S test run ManyRed --discard-sessions); check "discard-sessions ends every session" '[.result.groups[].sessions|length]|add' 0
+$S debug terminate --all >/dev/null
+
+# --- 0.7: traits in save and drift
+mkdir -p tsrc
+out=$($S class create TGreeter --trait --ivars greeting --package TraitDemo); check "class create --trait" '.result.kind' trait
+out=$($S class create Greeter --traits 'TGreeter' --ivars name --package TraitDemo); check "class create --traits" '.result.traits' TGreeter
+$S method compile TGreeter --protocol g - <<< $'greet\n\t^ \'hi \' , self name' >/dev/null
+$S method compile 'TGreeter classSide' --protocol g - <<< $'default\n\t^ self new' >/dev/null
+$S method compile Greeter --protocol a - <<< $'name\n\t^ name ifNil: [ \'world\' ]' >/dev/null
+out=$($S eval 'Greeter default greet'); check "trait methods work" '.result.value.print' "'hi world'"
+out=$($S save --package TraitDemo --dir tsrc --verify); check "save --verify with a trait: no drift" '.ok'
+grep -q "^Trait {" tsrc/TraitDemo/TGreeter.trait.st && grep -q "TGreeter classSide >> default" tsrc/TraitDemo/TGreeter.trait.st && grep -q "#traits : 'TGreeter'" tsrc/TraitDemo/Greeter.class.st && { pass=$((pass+1)); echo "ok   - tonel trait file and #traits line written"; } || { fail=$((fail+1)); echo "FAIL - trait tonel"; ls tsrc/TraitDemo; }
+$S eval --no-session - <<< "TGreeter compile: 'shout ^ self greet asUppercase' classified: 'g'. Greeter addInstVarNamed: 'extra'. 1" >/dev/null
+out=$($S save --package TraitDemo --dir tsrc --verify); check "eval-made trait method and ivar saved without drift" '.ok'
+grep -q "#classTraits : 'TGreeter classTrait'" tsrc/TraitDemo/Greeter.class.st && grep -q "'extra'" tsrc/TraitDemo/Greeter.class.st && { pass=$((pass+1)); echo "ok   - class definition patch keeps the traits lines"; } || { fail=$((fail+1)); echo "FAIL - traits lines lost"; head -12 tsrc/TraitDemo/Greeter.class.st; }
+RUNOUT=$($S run --load tsrc --eval "Greeter default shout" 2>/dev/null); out="{\"v\":\"$RUNOUT\"}"; check "saved trait package loads in a fresh image" '.v' 'HI WORLD'
+
+# --- 0.7: re-loading a baseline updates loaded packages, modified ones and the baseline itself
+mkdir -p lsrc/BaselineOfLoadDemo lsrc/LoadDemo ldep/BaselineOfLoadDep ldep/LoadDep
+printf "Package { #name : 'BaselineOfLoadDemo' }\n" > lsrc/BaselineOfLoadDemo/package.st
+printf "Package { #name : 'LoadDemo' }\n" > lsrc/LoadDemo/package.st
+printf "Package { #name : 'BaselineOfLoadDep' }\n" > ldep/BaselineOfLoadDep/package.st
+printf "Package { #name : 'LoadDep' }\n" > ldep/LoadDep/package.st
+baseline() { # baseline <file> <name> <body>
+  printf "Class {\n\t#name : '%s',\n\t#superclass : 'BaselineOf',\n\t#package : '%s'\n}\n\n{ #category : 'baselines' }\n%s >> baseline: spec [\n\t<baseline>\n\tspec for: #common do: [\n\t\t%s ]\n]\n" "$2" "$2" "$2" "$3" > "$1"; }
+baseline lsrc/BaselineOfLoadDemo/BaselineOfLoadDemo.class.st BaselineOfLoadDemo "spec package: 'LoadDemo'"
+baseline ldep/BaselineOfLoadDep/BaselineOfLoadDep.class.st BaselineOfLoadDep "spec package: 'LoadDep'"
+printf "Class {\n\t#name : 'LoadThing',\n\t#superclass : 'Object',\n\t#package : 'LoadDemo'\n}\n\n{ #category : 'x' }\nLoadThing >> answer [\n\t^ 1\n]\n" > lsrc/LoadDemo/LoadThing.class.st
+printf "Class {\n\t#name : 'LoadDepThing',\n\t#superclass : 'Object',\n\t#package : 'LoadDep'\n}\n\n{ #category : 'x' }\nLoadDepThing >> answer [\n\t^ 10\n]\n" > ldep/LoadDep/LoadDepThing.class.st
+out=$($S load LoadDemo --repository "tonel://$WORK/lsrc"); check "load a tonel baseline" '.result.loaded.new_package_count' 2
+$S method compile LoadThing - <<< $'answer\n\t^ 99' >/dev/null
+sed -i.bak 's/\^ 1$/^ 2/' lsrc/LoadDemo/LoadThing.class.st
+out=$($S load LoadDemo --repository "tonel://$WORK/lsrc"); check "re-load overwrites a package modified in the image" '.result.loaded.modified_packages_overwritten[0]' LoadDemo
+out=$($S eval 'LoadThing new answer'); check "the file version is in the image" '.result.value.print' 2
+out=$($S changes list); check "superseded unsaved changes are not written back later" '.result.unsaved_by_package.LoadDemo' null
+baseline lsrc/BaselineOfLoadDemo/BaselineOfLoadDemo.class.st BaselineOfLoadDemo "spec baseline: 'LoadDep' with: [ spec repository: 'tonel://$WORK/ldep' ]. spec package: 'LoadDemo' with: [ spec requires: #('LoadDep') ]"
+out=$($S load LoadDemo --repository "tonel://$WORK/lsrc"); check "a changed baseline is reloaded (new dependency appears)" '.result.loaded.new_packages|index("LoadDep")!=null'
+sed -i.bak 's/\^ 10$/^ 20/' ldep/LoadDep/LoadDepThing.class.st
+$S load LoadDemo --repository "tonel://$WORK/lsrc" >/dev/null
+out=$($S eval 'LoadDepThing new answer'); check "dependency package changes arrive through the top-level baseline" '.result.value.print' 20
+
+# --- 0.7: an unhandled error in a forked process no longer ends the headless image
+out=$($S eval '[ 1 / 0 ] fork. (Delay forMilliseconds: 300) wait. 7'); check "forked error: eval still answers" '.result.value.print' 7
+out=$($S ping); check "image survives the forked error" '.result.pong'
+out=$($S image info); check "background error recorded" '.result.background_errors[0].type' ZeroDivide
+
 # --- delivery: export an image without the stlive server
 $S start >/dev/null
 $S class create Shipped --package App >/dev/null
