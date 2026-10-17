@@ -378,10 +378,41 @@ StLiveCommands >> classCountsOf: packageNames [
 ]
 
 { #category : 'runtime' }
+StLiveCommands >> refreshBaselinePackage: name repository: description [
+	"Metacello never reloads a BaselineOf package whose class already exists in the image, so edits to the
+	baseline on disk (new packages, dependencies, groups) would be ignored on a re-load. Load it here first.
+	Answers a short status string."
+	| className repo loader |
+	className := 'BaselineOf' , name.
+	(Smalltalk globals includesKey: className asSymbol) ifFalse: [ ^ 'not loaded before' ].
+	^ [ repo := (MetacelloRepositorySpec new description: description; yourself) createRepository.
+		loader := MCVersionLoader new.
+		repo loadPackageNamed: className intoLoader: loader.
+		loader load.
+		'reloaded' ] on: Error do: [ :e | 'failed: ' , ([ e messageText asString ] on: Error do: [ :x | e class name ]) ]
+]
+
+{ #category : 'runtime' }
+StLiveCommands >> supersedeChangesOf: packageNames [
+	"The files were just loaded over these packages: recorded unsaved changes would resurrect old code on save."
+	| n |
+	n := 0.
+	server changes do: [ :c |
+		((c at: 'saved' ifAbsent: [ true ]) not and: [ packageNames includes: (c at: 'package' ifAbsent: [ nil ]) ]) ifTrue: [
+			c at: 'saved' put: true.
+			c at: 'superseded_by' put: 'load'.
+			n := n + 1 ] ].
+	^ n
+]
+
+{ #category : 'runtime' }
 StLiveCommands >> cmdLoadBaseline: args [
-	"Load a Metacello baseline (in a job: failures become debug sessions) and report what changed."
-	| name repository groups before timeout holder response warnings |
+	"Load a Metacello baseline (in a job: failures become debug sessions) and report what changed. Re-loading
+	updates packages that are already in the image, including ones with unsaved changes made in the image
+	(Monticello's merge-or-load question is answered with `load`: the files win) and the baseline itself."
+	| name repository groups before timeout holder response warnings overwritten |
 	warnings := Bag new.
+	overwritten := Set new.
 	name := self need: 'name' in: args.
 	repository := self need: 'repository' in: args.
 	groups := (args at: 'groups' ifAbsent: [ #() ]) asArray.
@@ -389,11 +420,18 @@ StLiveCommands >> cmdLoadBaseline: args [
 	before := (PackageOrganizer default packages collect: [ :p | p name ]) asSet.
 	response := self
 		runBlock: [
-			| loader added |
+			| loader added refreshed superseded |
 			loader := Metacello new baseline: name; repository: repository; yourself.
-			[ server suppressRecordingDuring: [ groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ] ] ]
+			[ server suppressRecordingDuring: [
+				[ refreshed := self refreshBaselinePackage: name repository: repository.
+				groups isEmpty ifTrue: [ loader load ] ifFalse: [ loader load: groups ] ]
+					on: MCMergeOrLoadWarning
+					do: [ :w |
+						overwritten addAll: ([ w versions collect: [ :v | v package name ] ] on: Error do: [ :x | #() ]).
+						w resume: true ] ] ]
 				on: Warning
 				do: [ :w | warnings add: ([ w messageText asString ] on: Error do: [ :x | w class name ]). w resume ].
+			superseded := self supersedeChangesOf: overwritten.
 			added := ((PackageOrganizer default packages collect: [ :p | p name ]) asSet difference: before) asSortedCollection asArray.
 			holder := self m: {
 				'new_package_count' -> added size.
@@ -401,6 +439,9 @@ StLiveCommands >> cmdLoadBaseline: args [
 				'new_packages_truncated' -> (added size > 15).
 				'classes_per_package' -> (self classCountsOf: added).
 				'empty_packages' -> (added select: [ :n | (PackageOrganizer default packageNamed: n ifAbsent: [ nil ]) ifNil: [ false ] ifNotNil: [ :pk | pk definedClasses isEmpty and: [ pk extensionMethods isEmpty ] ] ]).
+				'baseline_package' -> refreshed.
+				'modified_packages_overwritten' -> overwritten asSortedCollection asArray.
+				'changes_superseded' -> superseded.
 				'warnings' -> (warnings asSet asArray collect: [ :w | self m: { 'message' -> w. 'count' -> (warnings occurrencesOf: w) } ]) }.
 			true ]
 		origin: (self originCmd: 'load.baseline' args: args)
