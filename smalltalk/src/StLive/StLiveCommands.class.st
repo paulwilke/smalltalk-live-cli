@@ -330,7 +330,8 @@ StLiveCommands >> cmdStatus: args [
 		'suspended_sessions' -> (server sessions values count: [ :s | s isSuspended ]).
 		'sessions' -> server sessions size.
 		'object_refs' -> server objectCount.
-		'changes' -> server changes size })
+		'changes' -> server changes size.
+		'background_errors' -> server backgroundErrors size })
 ]
 
 { #category : 'runtime' }
@@ -365,7 +366,9 @@ StLiveCommands >> cmdImageInfo: args [
 		'loaded_packages' -> (packages asArray collect: [ :p | self m: { 'name' -> p name. 'classes' -> p definedClasses size } ]).
 		'unsaved_changes' -> (server changes count: [ :c | (c at: 'saved' ifAbsent: [ true ]) not ]).
 		'changes_by_package' -> self changesByPackage.
-		'sessions_suspended' -> (server sessions values count: [ :x | x isSuspended ]) })
+		'sessions_suspended' -> (server sessions values count: [ :x | x isSuspended ]).
+		'background_errors' -> (server backgroundErrors last: (10 min: server backgroundErrors size)) asArray.
+		'background_errors_total' -> server backgroundErrors size })
 ]
 
 { #category : 'runtime' }

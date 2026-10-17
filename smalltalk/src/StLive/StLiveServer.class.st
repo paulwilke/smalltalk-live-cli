@@ -21,7 +21,9 @@ Class {
 		'commands',
 		'changes',
 		'portFile',
-		'suppressed'
+		'suppressed',
+		'backgroundErrors',
+		'previousErrorHandler'
 	],
 	#classVars : [
 		'Current',
@@ -137,6 +139,52 @@ StLiveServer >> objectCount [
 { #category : 'accessing' }
 StLiveServer >> isSystemPackage: aName [
 	^ self class systemPackages includes: aName
+]
+
+{ #category : 'background errors' }
+StLiveServer >> backgroundErrors [
+	"Unhandled errors of processes that are not stlive jobs (forked by application code), newest last."
+	^ backgroundErrors ifNil: [ backgroundErrors := OrderedCollection new ]
+]
+
+{ #category : 'background errors' }
+StLiveServer >> noteBackgroundError: anError in: aProcess [
+	"Called by StLiveBackgroundErrorHandler on top of the failing stack: remember and log, never fail."
+	| entry frames message |
+	frames := [ (anError signalerContext stackOfSize: 10) collect: [ :c | c printString ] ] on: Error do: [ :e | #() ].
+	message := [ anError messageText asString ] on: Error do: [ :e | '' ].
+	message isEmpty ifTrue: [ message := [ anError description asString ] on: Error do: [ :e | anError class name ] ].
+	entry := OrderedDictionary new
+		at: 'time' put: DateAndTime now printString;
+		at: 'process' put: ([ aProcess name asString trimBoth ] on: Error do: [ :e | '?' ]);
+		at: 'type' put: anError class name;
+		at: 'message' put: message;
+		at: 'frames' put: frames asArray;
+		yourself.
+	self backgroundErrors addLast: entry.
+	[ self backgroundErrors size > 50 ] whileTrue: [ self backgroundErrors removeFirst ].
+	[ Stdio stdout
+		nextPutAll: 'stlive: unhandled error in process ' , (entry at: 'process') , ' (terminated, image keeps running): ' , (entry at: 'type') , ': ' , (entry at: 'message'); lf.
+	frames do: [ :f | Stdio stdout nextPutAll: '    ' , f; lf ].
+	Stdio stdout flush ] on: Error do: [ :e | nil ]
+]
+
+{ #category : 'background errors' }
+StLiveServer >> installBackgroundErrorHandler [
+	"Headless images quit on an unhandled error in any process without its own handler (the default handler is
+	the NonInteractiveUIManager). Replace it while the server runs. A GUI image keeps its debugger."
+	| current |
+	current := ErrorHandler defaultErrorHandler.
+	(current isKindOf: StLiveBackgroundErrorHandler) ifTrue: [ ^ self ].
+	(current isKindOf: MorphicUIManager) ifTrue: [ ^ self ].
+	previousErrorHandler := current.
+	ErrorHandler defaultErrorHandler: (StLiveBackgroundErrorHandler new server: self fallback: current; yourself)
+]
+
+{ #category : 'background errors' }
+StLiveServer >> uninstallBackgroundErrorHandler [
+	(ErrorHandler defaultErrorHandler isKindOf: StLiveBackgroundErrorHandler)
+		ifTrue: [ ErrorHandler defaultErrorHandler: previousErrorHandler ]
 ]
 
 { #category : 'references' }
@@ -265,6 +313,7 @@ StLiveServer >> startPortFile: aPath [
 	running := true.
 	StLiveTranscriptTee install.
 	self subscribeToSystemChanges.
+	[ self installBackgroundErrorHandler ] on: Error do: [ :e | nil ].
 	[ self acceptLoop ] forkAt: Processor userInterruptPriority named: 'stlive-acceptor'.
 	aPath ifNotNil: [
 		aPath asFileReference writeStreamDo: [ :s |
@@ -279,6 +328,7 @@ StLiveServer >> startPortFile: aPath [
 { #category : 'transport' }
 StLiveServer >> stop [
 	running := false.
+	self uninstallBackgroundErrorHandler.
 	listener ifNotNil: [ listener closeAndDestroy. listener := nil ]
 ]
 

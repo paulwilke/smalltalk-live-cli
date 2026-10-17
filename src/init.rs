@@ -33,6 +33,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("BaselineOfStLive/package.st", include_str!("../smalltalk/src/BaselineOfStLive/package.st")),
     ("BaselineOfStLive/BaselineOfStLive.class.st", include_str!("../smalltalk/src/BaselineOfStLive/BaselineOfStLive.class.st")),
     ("StLive/package.st", include_str!("../smalltalk/src/StLive/package.st")),
+    ("StLive/StLiveBackgroundErrorHandler.class.st", include_str!("../smalltalk/src/StLive/StLiveBackgroundErrorHandler.class.st")),
     ("StLive/StLiveCommands.class.st", include_str!("../smalltalk/src/StLive/StLiveCommands.class.st")),
     ("StLive/StLiveDescriber.class.st", include_str!("../smalltalk/src/StLive/StLiveDescriber.class.st")),
     ("StLive/StLiveErrorHandler.class.st", include_str!("../smalltalk/src/StLive/StLiveErrorHandler.class.st")),
