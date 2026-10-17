@@ -113,25 +113,61 @@ fn str_list(v: &Value, key: &str) -> Vec<String> {
     v[key].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
+/// `true` when a recorded change concerns a trait (Tonel: `Name.trait.st`). Images older than 0.7 do not
+/// send `class_kind`; then an existing `.trait.st` file decides.
+fn is_trait(c: &Value, pkg_dir: &Path) -> bool {
+    match c["class_kind"].as_str() {
+        Some(k) => k == "trait",
+        None => pkg_dir.join(format!("{}.trait.st", c["class_name"].as_str().unwrap_or(""))).exists(),
+    }
+}
+
+/// Tonel header of the class side: `Foo class`, or `TFoo classSide` for a trait.
+fn class_side_header(name: &str, is_a_trait: bool) -> String {
+    if is_a_trait { format!("{} classSide", name) } else { format!("{} class", name) }
+}
+
+/// Class name and side ("instance" / "class") of a Tonel method header such as `Foo class` or `TFoo classSide`.
+fn split_header(header: &str) -> (String, &'static str) {
+    if let Some(c) = header.strip_suffix(" classSide").or_else(|| header.strip_suffix(" class")) {
+        (c.to_string(), "class")
+    } else {
+        (header.to_string(), "instance")
+    }
+}
+
+fn var_list(label: &str, items: &[String]) -> String {
+    if items.is_empty() { return String::new(); }
+    let body = items.iter().map(|v| format!("\t\t'{}'", v)).collect::<Vec<_>>().join(",\n");
+    format!("\t#{} : [\n{}\n\t],\n", label, body)
+}
+
 fn render_class(c: &Value, symbol_style: bool, package: &str) -> String {
     let name = c["class_name"].as_str().unwrap_or("");
-    let sup = c["superclass"].as_str().unwrap_or("Object");
-    let list = |label: &str, items: Vec<String>| -> String {
-        if items.is_empty() { return String::new(); }
-        let body = items.iter().map(|v| format!("\t\t'{}'", v)).collect::<Vec<_>>().join(",\n");
-        format!("\t#{} : [\n{}\n\t],\n", label, body)
-    };
+    let is_a_trait = c["class_kind"].as_str() == Some("trait");
     let mut s = String::new();
     if let Some(comment) = c["comment"].as_str() {
         if !comment.is_empty() {
             s.push_str(&format!("\"\n{}\n\"\n", norm(comment).replace('"', "\"\"")));
         }
     }
-    s.push_str("Class {\n");
-    s.push_str(&format!("\t#name : {},\n\t#superclass : {},\n", sym(name, symbol_style), sym(sup, symbol_style)));
-    s.push_str(&list("instVars", str_list(c, "instance_variables")));
-    s.push_str(&list("classVars", str_list(c, "class_variables")));
-    s.push_str(&list("classInstVars", str_list(c, "class_instance_variables")));
+    if is_a_trait {
+        s.push_str("Trait {\n");
+        s.push_str(&format!("\t#name : {},\n", sym(name, symbol_style)));
+    } else {
+        let sup = c["superclass"].as_str().unwrap_or("Object");
+        s.push_str("Class {\n");
+        s.push_str(&format!("\t#name : {},\n\t#superclass : {},\n", sym(name, symbol_style), sym(sup, symbol_style)));
+    }
+    if let Some(t) = c["traits"].as_str().filter(|t| !t.is_empty()) {
+        s.push_str(&format!("\t#traits : '{}',\n", t));
+    }
+    if let Some(t) = c["class_traits"].as_str().filter(|t| !t.is_empty()) {
+        s.push_str(&format!("\t#classTraits : '{}',\n", t));
+    }
+    s.push_str(&var_list("instVars", &str_list(c, "instance_variables")));
+    s.push_str(&var_list("classVars", &str_list(c, "class_variables")));
+    s.push_str(&var_list("classInstVars", &str_list(c, "class_instance_variables")));
     if symbol_style {
         s.push_str(&format!("\t#category : {}\n}}\n", sym(package, true)));
     } else {
@@ -153,11 +189,18 @@ fn listed(block: &str, key: &str) -> Vec<String> {
     }
 }
 
-/// If the image's class has other instance/class variables than the file, re-render the definition block
-/// (keeping name, superclass and package/category lines of the file); otherwise answer None.
-fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &str) -> Option<String> {
-    let start = text.find("Class {")?;
+/// The `Class {` / `Trait {` definition block of a Tonel file: (start, end) byte offsets.
+fn definition_span(text: &str) -> Option<(usize, usize)> {
+    let start = ["Class {", "Trait {"].iter().filter_map(|m| text.find(m)).min()?;
     let end = start + text[start..].find("\n}")? + 2;
+    Some((start, end))
+}
+
+/// If the image's class has other instance/class variables than the file, re-render the variable lists of
+/// the definition block and keep every other entry (name, superclass, traits, classTraits, category, package)
+/// as it is in the file; otherwise answer None.
+fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &str) -> Option<String> {
+    let (start, end) = definition_span(text)?;
     let block = &text[start..end];
     let wanted = [
         ("instVars", str_list(c, "instance_variables")),
@@ -167,23 +210,39 @@ fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &s
     if wanted.iter().all(|(k, v)| &listed(block, k) == v) {
         return None;
     }
-    let keep = |prefix: &str| block.lines().find(|l| l.trim_start().starts_with(prefix)).map(|l| l.to_string());
-    let mut out = String::from("Class {\n");
-    for p in ["#name :", "#superclass :"] {
-        if let Some(l) = keep(p) { out.push_str(&l); out.push('\n'); }
-    }
-    for (k, v) in &wanted {
-        if !v.is_empty() {
-            let body = v.iter().map(|x| format!("\t\t'{}'", x)).collect::<Vec<_>>().join(",\n");
-            out.push_str(&format!("\t#{} : [\n{}\n\t],\n", k, body));
+    // entries: `#key : value` possibly spanning several lines (arrays)
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut lines = block.lines();
+    let opener = lines.next().unwrap_or("Class {").to_string();
+    for l in lines {
+        if l.trim() == "}" { break; }
+        if let Some(key) = l.trim_start().strip_prefix('#').and_then(|r| r.split_whitespace().next()) {
+            entries.push((key.to_string(), l.to_string()));
+        } else if let Some(last) = entries.last_mut() {
+            last.1.push('\n');
+            last.1.push_str(l);
         }
     }
-    let tail = keep("#package :").or_else(|| keep("#category :")).unwrap_or_else(|| {
-        if symbol_style { format!("\t#category : {}", sym(package, true)) } else { format!("\t#package : '{}'", package) }
-    });
-    out.push_str(&tail);
-    out.push_str("\n}");
-    Some(format!("{}{}{}", &text[..start], out, &text[end..]))
+    let is_list = |k: &str| wanted.iter().any(|(w, _)| *w == k);
+    let mut out: Vec<String> = Vec::new();
+    let mut inserted = false;
+    let lists = || wanted.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| var_list(k, v).trim_end_matches('\n').trim_end_matches(',').to_string()).collect::<Vec<_>>();
+    for (k, raw) in &entries {
+        if is_list(k) { continue; }
+        if !inserted && (k == "category" || k == "package") {
+            out.extend(lists());
+            inserted = true;
+        }
+        out.push(raw.trim_end().trim_end_matches(',').to_string());
+    }
+    if !inserted {
+        out.extend(lists());
+    }
+    if !entries.iter().any(|(k, _)| k == "package" || k == "category") {
+        out.push(if symbol_style { format!("\t#category : {}", sym(package, true)) } else { format!("\t#package : '{}'", package) });
+    }
+    let rendered = format!("{}\n{}\n}}", opener, out.join(",\n"));
+    Some(format!("{}{}{}", &text[..start], rendered, &text[end..]))
 }
 
 #[derive(Default)]
@@ -236,7 +295,7 @@ pub fn plan(changes: &[Value], package: &str, dir: &Path, dry_run: bool) -> Resu
 
     for c in &class_defs {
         let name = c["class_name"].as_str().unwrap_or("");
-        let path = pkg_dir.join(format!("{}.class.st", name));
+        let path = pkg_dir.join(format!("{}.{}.st", name, if is_trait(c, &pkg_dir) { "trait" } else { "class" }));
         if path.exists() {
             // existing file: only update the variable lists of the class definition if they changed
             let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -252,16 +311,18 @@ pub fn plan(changes: &[Value], package: &str, dir: &Path, dry_run: bool) -> Resu
 
     for ((class_name, side, selector), c) in &methods {
         let extension = c["class_package"].as_str() != Some(package);
-        let file = pkg_dir.join(format!("{}.{}.st", class_name, if extension { "extension" } else { "class" }));
-        let header = if side == "class" { format!("{} class", class_name) } else { class_name.clone() };
+        let is_a_trait = is_trait(c, &pkg_dir);
+        let kind = if extension { "extension" } else if is_a_trait { "trait" } else { "class" };
+        let file = pkg_dir.join(format!("{}.{}.st", class_name, kind));
+        let header = if side == "class" { class_side_header(class_name, is_a_trait) } else { class_name.clone() };
         let existed = load(&file, &mut contents);
         if !existed {
             let head = if extension {
                 format!("Extension {{ #name : {} }}\n", sym(class_name, symbol_style))
             } else {
                 return Err(format!(
-                    "{} is not on disk (class {} has no file in {}). Create the class through `class create` first or check --dir.",
-                    file.display(), class_name, pkg_dir.display()
+                    "{} is not on disk ({} {} has no file in {}). Create it through `class create` first or check --dir.",
+                    file.display(), kind, class_name, pkg_dir.display()
                 ));
             };
             contents.insert(file.clone(), head);
@@ -364,19 +425,23 @@ pub fn parse_methods(text: &str) -> Vec<FileMethod> {
 }
 
 /// Compare the methods the image has for a package with the Tonel files in `<dir>/<package>/`.
+/// Classes and traits (`.class.st` / `.trait.st`) are both compared; trait class-side methods appear as
+/// `TFoo classSide >> sel` in the files and as side `class` in the image.
 pub fn drift(image: &Value, package: &str, dir: &Path) -> Value {
     let pkg_dir = dir.join(package);
     let mut in_files: BTreeMap<String, String> = BTreeMap::new();
     let mut file_classes: Vec<String> = Vec::new();
+    let mut file_traits: Vec<String> = Vec::new();
     if let Ok(rd) = fs::read_dir(&pkg_dir) {
         for e in rd.flatten() {
             let p = e.path();
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
             if name.ends_with(".class.st") { file_classes.push(name.trim_end_matches(".class.st").to_string()); }
-            if name.ends_with(".class.st") || name.ends_with(".extension.st") {
+            if name.ends_with(".trait.st") { file_traits.push(name.trim_end_matches(".trait.st").to_string()); }
+            if name.ends_with(".class.st") || name.ends_with(".trait.st") || name.ends_with(".extension.st") {
                 if let Ok(t) = fs::read_to_string(&p) {
                     for m in parse_methods(&t) {
-                        let (cls, side) = match m.class_header.strip_suffix(" class") { Some(c) => (c.to_string(), "class"), None => (m.class_header.clone(), "instance") };
+                        let (cls, side) = split_header(&m.class_header);
                         in_files.insert(format!("{}|{}|{}", cls, side, m.selector), m.source);
                     }
                 }
@@ -391,9 +456,14 @@ pub fn drift(image: &Value, package: &str, dir: &Path) -> Value {
     let missing_in_files: Vec<String> = in_image.keys().filter(|k| !in_files.contains_key(*k)).map(|k| label(k)).collect();
     let missing_in_image: Vec<String> = in_files.keys().filter(|k| !in_image.contains_key(*k)).map(|k| label(k)).collect();
     let different: Vec<String> = in_image.iter().filter(|(k, v)| in_files.get(*k).map(|f| &normalise(f) != &normalise(v)).unwrap_or(false)).map(|(k, _)| label(k)).collect();
-    let image_classes: Vec<String> = image["classes"].as_array().map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect()).unwrap_or_default();
-    let classes_missing_in_files: Vec<&String> = image_classes.iter().filter(|c| !file_classes.contains(c)).collect();
-    let classes_missing_in_image: Vec<&String> = file_classes.iter().filter(|c| !image_classes.contains(c)).collect();
+    let names = |key: &str| -> Vec<String> { image[key].as_array().map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect()).unwrap_or_default() };
+    // images before 0.7 list traits under `classes`; the files decide whether a name is a class or a trait
+    let mut image_classes: Vec<String> = names("classes");
+    image_classes.extend(names("traits"));
+    let mut file_behaviors: Vec<String> = file_classes.clone();
+    file_behaviors.extend(file_traits.iter().cloned());
+    let classes_missing_in_files: Vec<&String> = image_classes.iter().filter(|c| !file_behaviors.contains(c)).collect();
+    let classes_missing_in_image: Vec<&String> = file_behaviors.iter().filter(|c| !image_classes.contains(c)).collect();
     let ok = missing_in_files.is_empty() && missing_in_image.is_empty() && different.is_empty() && classes_missing_in_files.is_empty() && classes_missing_in_image.is_empty();
     json!({
         "package": package,
@@ -406,4 +476,105 @@ pub fn drift(image: &Value, package: &str, dir: &Path) -> Value {
         "classes_missing_in_files": classes_missing_in_files,
         "classes_missing_in_image": classes_missing_in_image,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("stlive-save-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("Pkg")).unwrap();
+        d
+    }
+
+    const TRAIT_FILE: &str = "Trait {\n\t#name : 'TFoo',\n\t#instVars : [\n\t\t'tv'\n\t],\n\t#package : 'Pkg'\n}\n\n{ #category : 'x' }\nTFoo classSide >> make [\n\t^ self new\n]\n\n{ #category : 'x' }\nTFoo >> hello [\n\t^ 1\n]\n";
+
+    #[test]
+    fn parses_trait_class_side_headers() {
+        let ms = parse_methods(TRAIT_FILE);
+        assert_eq!(ms.len(), 2);
+        assert_eq!(split_header(&ms[0].class_header), ("TFoo".to_string(), "class"));
+        assert_eq!(ms[0].selector, "make");
+        assert_eq!(split_header(&ms[1].class_header), ("TFoo".to_string(), "instance"));
+        assert_eq!(split_header("Foo class"), ("Foo".to_string(), "class"));
+    }
+
+    #[test]
+    fn saves_trait_methods_into_the_trait_file() {
+        let dir = tmp("trait-methods");
+        fs::write(dir.join("Pkg/TFoo.trait.st"), TRAIT_FILE).unwrap();
+        let changes = vec![
+            json!({"index": 1, "kind": "method-compile", "class_name": "TFoo", "class_kind": "trait", "class_package": "Pkg", "package": "Pkg", "side": "instance", "selector": "hello", "protocol": "x", "new_source": "hello\n\t^ 2"}),
+            json!({"index": 2, "kind": "method-compile", "class_name": "TFoo", "class_kind": "trait", "class_package": "Pkg", "package": "Pkg", "side": "class", "selector": "other", "protocol": "x", "new_source": "other\n\t^ 3"}),
+        ];
+        let p = plan(&changes, "Pkg", &dir, false).unwrap();
+        assert_eq!(p.marked, vec![1, 2]);
+        let text = fs::read_to_string(dir.join("Pkg/TFoo.trait.st")).unwrap();
+        assert!(text.contains("TFoo >> hello [\n\t^ 2\n]"), "{}", text);
+        assert!(text.contains("TFoo classSide >> other [\n\t^ 3\n]"), "{}", text);
+        assert!(!dir.join("Pkg/TFoo.class.st").exists());
+        // an old image sends no class_kind: the existing .trait.st file decides
+        let old = vec![json!({"index": 3, "kind": "method-compile", "class_name": "TFoo", "class_package": "Pkg", "package": "Pkg", "side": "class", "selector": "make", "protocol": "x", "new_source": "make\n\t^ self basicNew"})];
+        plan(&old, "Pkg", &dir, false).unwrap();
+        let text = fs::read_to_string(dir.join("Pkg/TFoo.trait.st")).unwrap();
+        assert!(text.contains("TFoo classSide >> make [\n\t^ self basicNew\n]"), "{}", text);
+        assert_eq!(text.matches(" >> make [").count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn creates_trait_definitions_and_classes_using_traits() {
+        let dir = tmp("trait-create");
+        let changes = vec![
+            json!({"index": 1, "kind": "class-create", "class_name": "TBar", "class_kind": "trait", "package": "Pkg", "class_package": "Pkg", "superclass": null, "instance_variables": ["x"], "class_variables": [], "class_instance_variables": []}),
+            json!({"index": 2, "kind": "class-create", "class_name": "Bar", "class_kind": "class", "package": "Pkg", "class_package": "Pkg", "superclass": "Object", "traits": "TBar", "class_traits": "TBar classTrait", "instance_variables": ["a"], "class_variables": [], "class_instance_variables": []}),
+        ];
+        plan(&changes, "Pkg", &dir, false).unwrap();
+        let t = fs::read_to_string(dir.join("Pkg/TBar.trait.st")).unwrap();
+        assert_eq!(t, "Trait {\n\t#name : 'TBar',\n\t#instVars : [\n\t\t'x'\n\t],\n\t#package : 'Pkg'\n}\n");
+        let c = fs::read_to_string(dir.join("Pkg/Bar.class.st")).unwrap();
+        assert_eq!(c, "Class {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#traits : 'TBar',\n\t#classTraits : 'TBar classTrait',\n\t#instVars : [\n\t\t'a'\n\t],\n\t#package : 'Pkg'\n}\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn patching_variables_keeps_traits_and_category_lines() {
+        let file = "\"\nA comment.\n\"\nClass {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#traits : 'TBar',\n\t#classTraits : 'TBar classTrait',\n\t#instVars : [\n\t\t'a'\n\t],\n\t#category : 'Pkg',\n\t#package : 'Pkg'\n}\n\n{ #category : 'x' }\nBar >> one [\n\t^ 1\n]\n";
+        let c = json!({"class_name": "Bar", "instance_variables": ["a", "b"], "class_variables": ["Registry"], "class_instance_variables": []});
+        let out = patch_class_definition(file, &c, false, "Pkg").unwrap();
+        let expected = "\"\nA comment.\n\"\nClass {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#traits : 'TBar',\n\t#classTraits : 'TBar classTrait',\n\t#instVars : [\n\t\t'a',\n\t\t'b'\n\t],\n\t#classVars : [\n\t\t'Registry'\n\t],\n\t#category : 'Pkg',\n\t#package : 'Pkg'\n}\n\n{ #category : 'x' }\nBar >> one [\n\t^ 1\n]\n";
+        assert_eq!(out, expected);
+        // unchanged variables: nothing to patch
+        let same = json!({"class_name": "Bar", "instance_variables": ["a"], "class_variables": [], "class_instance_variables": []});
+        assert!(patch_class_definition(file, &same, false, "Pkg").is_none());
+        // a trait definition is patched the same way
+        let t = json!({"class_name": "TFoo", "instance_variables": ["tv", "tw"], "class_variables": [], "class_instance_variables": []});
+        let out = patch_class_definition(TRAIT_FILE, &t, false, "Pkg").unwrap();
+        assert!(out.starts_with("Trait {\n\t#name : 'TFoo',\n\t#instVars : [\n\t\t'tv',\n\t\t'tw'\n\t],\n\t#package : 'Pkg'\n}\n"), "{}", out);
+    }
+
+    #[test]
+    fn drift_compares_traits_and_their_class_side() {
+        let dir = tmp("trait-drift");
+        fs::write(dir.join("Pkg/TFoo.trait.st"), TRAIT_FILE).unwrap();
+        fs::write(dir.join("Pkg/Bar.class.st"), "Class {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#traits : 'TFoo',\n\t#package : 'Pkg'\n}\n\n{ #category : 'x' }\nBar >> own [\n\t^ 1\n]\n").unwrap();
+        // what a 0.7 image answers: only locally defined methods, traits listed separately
+        let image = json!({"classes": ["Bar"], "traits": ["TFoo"], "methods": [
+            {"class": "TFoo", "side": "class", "selector": "make", "source": "make\n\t^ self new"},
+            {"class": "TFoo", "side": "instance", "selector": "hello", "source": "hello\n\t^ 1"},
+            {"class": "Bar", "side": "instance", "selector": "own", "source": "own\n\t^ 1"}]});
+        let r = drift(&image, "Pkg", &dir);
+        assert_eq!(r["ok"], json!(true), "{}", r);
+        // an older image lists the trait under classes: still no drift
+        let old = json!({"classes": ["Bar", "TFoo"], "methods": image["methods"].clone()});
+        assert_eq!(drift(&old, "Pkg", &dir)["ok"], json!(true));
+        // a trait method the image reports under the using class is real drift (that is what old images did)
+        let mut leaked = image.clone();
+        leaked["methods"].as_array_mut().unwrap().push(json!({"class": "Bar", "side": "instance", "selector": "hello", "source": "hello\n\t^ 1"}));
+        let r = drift(&leaked, "Pkg", &dir);
+        assert_eq!(r["missing_in_files"], json!(["Bar>>hello"]));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

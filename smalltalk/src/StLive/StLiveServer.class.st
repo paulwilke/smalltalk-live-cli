@@ -398,6 +398,8 @@ StLiveServer >> methodChanged: announcement [
 	cls := m methodClass.
 	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
 	m selector == #DoIt ifTrue: [ ^ self ].
+	"a trait method copied into a using class is recorded for the trait only"
+	((m respondsTo: #origin) and: [ m origin notNil and: [ m origin ~~ cls ] ]) ifTrue: [ ^ self ].
 	old := (announcement respondsTo: #oldMethod) ifTrue: [ announcement oldMethod ] ifFalse: [ nil ].
 	changes add: (OrderedDictionary new
 		at: 'time' put: DateAndTime now printString;
@@ -407,6 +409,7 @@ StLiveServer >> methodChanged: announcement [
 		at: 'package' put: (m package name);
 		at: 'class_package' put: cls instanceSide package name;
 		at: 'class_name' put: cls instanceSide name;
+		at: 'class_kind' put: (commands kindOf: cls);
 		at: 'side' put: (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]);
 		at: 'class' put: cls printString;
 		at: 'selector' put: m selector;
@@ -423,6 +426,7 @@ StLiveServer >> methodRemoved: announcement [
 	[ m := announcement method.
 	cls := m methodClass.
 	(cls isNil or: [ self isOwnClass: cls ]) ifTrue: [ ^ self ].
+	((m respondsTo: #origin) and: [ m origin notNil and: [ m origin ~~ cls ] ]) ifTrue: [ ^ self ].
 	changes add: (OrderedDictionary new
 		at: 'time' put: DateAndTime now printString;
 		at: 'kind' put: 'method-remove';
@@ -431,6 +435,7 @@ StLiveServer >> methodRemoved: announcement [
 		at: 'package' put: (m package name);
 		at: 'class_package' put: cls instanceSide package name;
 		at: 'class_name' put: cls instanceSide name;
+		at: 'class_kind' put: (commands kindOf: cls);
 		at: 'side' put: (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]);
 		at: 'class' put: cls printString;
 		at: 'selector' put: m selector;

@@ -64,14 +64,29 @@ StLiveCommands >> summary: anObject [
 
 { #category : 'helpers' }
 StLiveCommands >> classNamed: aString [
-	"'Foo' or 'Foo class'."
+	"'Foo' or 'Foo class' (for a trait also 'TFoo classSide' / 'TFoo classTrait', as Tonel and Pharo print it)."
 	| name meta cls |
 	name := aString trimBoth.
-	meta := name endsWith: ' class'.
-	meta ifTrue: [ name := (name copyFrom: 1 to: name size - 6) trimBoth ].
+	meta := false.
+	#(' class' ' classSide' ' classTrait') do: [ :suffix |
+		(meta not and: [ name endsWith: suffix ]) ifTrue: [
+			meta := true.
+			name := (name copyFrom: 1 to: name size - suffix size) trimBoth ] ].
 	cls := Smalltalk globals at: name asSymbol ifAbsent: [ self fail: 'unknown_class' message: 'No class named ' , name ].
 	cls isBehavior ifFalse: [ self fail: 'unknown_class' message: name , ' is not a class' ].
 	^ meta ifTrue: [ cls class ] ifFalse: [ cls ]
+]
+
+{ #category : 'helpers' }
+StLiveCommands >> kindOf: aBehavior [
+	"'trait' or 'class' (Tonel keeps them in .trait.st / .class.st files)."
+	^ ([ aBehavior instanceSide isTrait ] on: Error do: [ :e | false ]) ifTrue: [ 'trait' ] ifFalse: [ 'class' ]
+]
+
+{ #category : 'helpers' }
+StLiveCommands >> traitCompositionOf: aBehavior [
+	"The trait composition as Tonel writes it ('TFoo + TBar'), nil when there is none."
+	^ [ aBehavior hasTraitComposition ifTrue: [ aBehavior traitCompositionString ] ifFalse: [ nil ] ] on: Error do: [ :e | nil ]
 ]
 
 { #category : 'helpers' }
@@ -728,7 +743,9 @@ StLiveCommands >> cmdClassShow: args [
 	sorted := cls selectors asSortedCollection asArray.
 	^ self ok: (self m: {
 		'name' -> cls printString.
+		'kind' -> (self kindOf: cls).
 		'package' -> ([ cls package name ] on: Error do: [ :e | nil ]).
+		'traits' -> (self traitCompositionOf: cls).
 		'superclasses' -> (cls allSuperclasses collect: [ :c | c printString ]).
 		'subclasses' -> ((cls subclasses first: (30 min: cls subclasses size)) collect: [ :c | c printString ]).
 		'instance_variables' -> cls instVarNames asArray.
@@ -766,9 +783,12 @@ StLiveCommands >> classChangeEntry: cls origin: origin [
 		'origin' -> origin.
 		'class' -> cls name.
 		'class_name' -> cls name.
+		'class_kind' -> (self kindOf: cls).
 		'package' -> cls package name.
 		'class_package' -> cls package name.
 		'superclass' -> (cls superclass ifNotNil: [ :sc | sc name ]).
+		'traits' -> (self traitCompositionOf: cls).
+		'class_traits' -> (self traitCompositionOf: cls class).
 		'instance_variables' -> cls instVarNames asArray.
 		'class_instance_variables' -> cls class instVarNames asArray.
 		'class_variables' -> cls classVarNames asArray.
@@ -777,22 +797,26 @@ StLiveCommands >> classChangeEntry: cls origin: origin [
 
 { #category : 'code' }
 StLiveCommands >> cmdClassCreate: args [
-	| name sup ivars package cls classIvars classVars comment words |
+	"Create or redefine a class; with trait: true a trait (Tonel .trait.st); traits: 'TFoo + TBar' uses traits."
+	| name sup ivars package cls classIvars classVars comment words isTrait builder traits |
 	name := self need: 'name' in: args.
-	sup := self classNamed: (args at: 'superclass' ifAbsent: [ 'Object' ]).
+	isTrait := (args at: 'trait' ifAbsent: [ false ]) == true.
+	sup := isTrait ifTrue: [ nil ] ifFalse: [ self classNamed: (args at: 'superclass' ifAbsent: [ 'Object' ]) ].
 	words := [ :key | ((args at: key ifAbsent: [ '' ]) substrings: ' ,') collect: [ :w | w asSymbol ] ].
 	ivars := words value: 'ivars'.
 	classIvars := words value: 'class_ivars'.
 	classVars := words value: 'class_vars'.
 	comment := args at: 'comment' ifAbsent: [ nil ].
 	package := args at: 'package' ifAbsent: [ 'Live-Scratch' ].
+	traits := (args at: 'traits' ifAbsent: [ nil ]) ifNotNil: [ :spec |
+		[ Smalltalk compiler evaluate: spec ] on: Error do: [ :e | self fail: 'bad_argument' message: 'traits must be a trait composition such as ''TFoo + TBar'': ' , e messageText asString ] ].
 	server suppressRecordingDuring: [
-		cls := (sup << name asSymbol)
-			slots: ivars;
-			sharedVariables: classVars;
-			package: package;
-			install.
-		cls class instanceVariableNames: (classIvars inject: '' into: [ :a :w | a , w , ' ' ]) trimBoth.
+		builder := isTrait ifTrue: [ Trait << name asSymbol ] ifFalse: [ sup << name asSymbol ].
+		builder slots: ivars; package: package.
+		isTrait ifFalse: [ builder sharedVariables: classVars ].
+		traits ifNotNil: [ builder traits: traits ].
+		cls := builder install.
+		isTrait ifFalse: [ cls class instanceVariableNames: (classIvars inject: '' into: [ :a :w | a , w , ' ' ]) trimBoth ].
 		comment ifNotNil: [ cls comment: comment ] ].
 	server changes add: (self m: {
 		'time' -> DateAndTime now printString.
@@ -800,16 +824,21 @@ StLiveCommands >> cmdClassCreate: args [
 		'saved' -> false.
 		'class' -> cls name.
 		'class_name' -> cls name.
+		'class_kind' -> (self kindOf: cls).
 		'package' -> package.
 		'class_package' -> package.
-		'superclass' -> sup name.
+		'superclass' -> (sup ifNotNil: [ :s | s name ]).
+		'traits' -> (self traitCompositionOf: cls).
+		'class_traits' -> (self traitCompositionOf: cls class).
 		'instance_variables' -> cls instVarNames asArray.
 		'class_instance_variables' -> cls class instVarNames asArray.
 		'class_variables' -> cls classVarNames asArray.
 		'comment' -> comment }).
 	^ self ok: (self m: {
 		'class' -> cls name.
+		'kind' -> (self kindOf: cls).
 		'package' -> package.
+		'traits' -> (self traitCompositionOf: cls).
 		'instance_variables' -> cls instVarNames asArray.
 		'class_instance_variables' -> cls class instVarNames asArray.
 		'class_variables' -> cls classVarNames asArray })
@@ -856,6 +885,7 @@ StLiveCommands >> compileMethod: args [
 		'package' -> ([ (cls compiledMethodAt: selector) package name ] on: Error do: [ :e | cls instanceSide package name ]).
 		'class_package' -> ([ cls instanceSide package name ] on: Error do: [ :e | nil ]).
 		'class_name' -> cls instanceSide name.
+		'class_kind' -> (self kindOf: cls).
 		'side' -> (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]).
 		'class' -> cls printString.
 		'selector' -> selector.
@@ -889,6 +919,7 @@ StLiveCommands >> cmdMethodRemove: args [
 		'package' -> ([ (cls >> sel) package name ] on: Error do: [ :e | nil ]).
 		'class_package' -> ([ cls instanceSide package name ] on: Error do: [ :e | nil ]).
 		'class_name' -> cls instanceSide name.
+		'class_kind' -> (self kindOf: cls).
 		'side' -> (cls isMeta ifTrue: [ 'class' ] ifFalse: [ 'instance' ]).
 		'class' -> cls printString.
 		'selector' -> sel.
@@ -1469,21 +1500,26 @@ StLiveCommands >> normalizedSourceOf: aMethod [
 
 { #category : 'code' }
 StLiveCommands >> cmdPackageMethods: args [
-	"Every class and method of a package as the image has it (extension methods included), for `stlive drift`."
-	| name pkg methods classes seen |
+	"Every class, trait and method of a package as the image has it (extension methods included), for `stlive drift`.
+	Only methods defined locally count: a method a class gets from a trait lives in the trait's Tonel file."
+	| name pkg methods classes traits seen |
 	name := self need: 'package' in: args.
 	pkg := PackageOrganizer default packageNamed: name ifAbsent: [ self fail: 'unknown_package' message: 'No package ' , name printString ].
-	classes := pkg definedClasses collect: [ :c | c name ].
+	classes := (pkg definedClasses reject: [ :c | c isTrait ]) collect: [ :c | c name ].
+	traits := (pkg definedClasses select: [ :c | c isTrait ]) collect: [ :c | c name ].
 	methods := OrderedCollection new.
 	seen := IdentitySet new.
 	pkg definedClasses do: [ :c |
 		{ c. c class } do: [ :b |
-			b methods do: [ :m |
+			b localMethods do: [ :m |
 				((m package name = name) and: [ (seen includes: m) not ]) ifTrue: [ seen add: m. methods add: m ] ] ] ].
-	pkg extensionMethods do: [ :m | (seen includes: m) ifFalse: [ seen add: m. methods add: m ] ].
+	pkg extensionMethods do: [ :m |
+		((seen includes: m) or: [ (m respondsTo: #origin) and: [ m origin notNil and: [ m origin ~~ m methodClass ] ] ])
+			ifFalse: [ seen add: m. methods add: m ] ].
 	^ self ok: (self m: {
 		'package' -> name.
 		'classes' -> classes asArray.
+		'traits' -> traits asArray.
 		'methods' -> (methods collect: [ :m |
 			self m: {
 				'class' -> m methodClass instanceSide name.

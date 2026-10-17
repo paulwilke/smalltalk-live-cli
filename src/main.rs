@@ -256,13 +256,17 @@ enum FindCmd {
 enum ClassCmd {
     /// Hierarchy, variables, methods ('Foo' or 'Foo class')
     Show { name: String, #[arg(long)] offset: Option<u64>, #[arg(long)] limit: Option<u64> },
-    /// Create (or redefine) a class
+    /// Create (or redefine) a class, or a trait with --trait
     Create {
         name: String,
         #[arg(long)] superclass: Option<String>,
         /// Space separated instance variable names
         #[arg(long)] ivars: Option<String>,
         #[arg(long)] package: Option<String>,
+        /// Create a trait instead of a class (Tonel: Name.trait.st)
+        #[arg(long)] r#trait: bool,
+        /// Trait composition the class uses, e.g. 'TFoo + TBar'
+        #[arg(long)] traits: Option<String>,
         /// Instance variables on the class side (space separated)
         #[arg(long)] class_ivars: Option<String>,
         /// Class variables (space separated)
@@ -1087,9 +1091,11 @@ fn main() {
                 opt(&mut m, "limit", limit);
                 ("class.show".into(), Value::Object(m), None)
             }
-            ClassCmd::Create { name, superclass, ivars, package, class_ivars, class_vars, comment } => {
+            ClassCmd::Create { name, superclass, ivars, package, r#trait, traits, class_ivars, class_vars, comment } => {
                 let mut m = Map::new();
                 m.insert("name".into(), name.into());
+                if r#trait { m.insert("trait".into(), true.into()); }
+                opt(&mut m, "traits", traits);
                 opt(&mut m, "class_ivars", class_ivars);
                 opt(&mut m, "class_vars", class_vars);
                 opt(&mut m, "comment", comment);
