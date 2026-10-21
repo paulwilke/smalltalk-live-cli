@@ -797,7 +797,7 @@ Usage: stlive test [OPTIONS] <COMMAND>
 
 Commands:
   list  List test classes (substring or glob on class or package name)
-  run   Run a TestCase class, 'Class>>testSelector', or a package (also repeats single tests)
+  run   Run tests: classes, packages, 'Class>>selector' or glob patterns (`*`, `?`); --fresh runs them in a new image
   help  Print this message or the help of the given subcommand(s)
 
 Options:
@@ -834,25 +834,31 @@ Options:
 ### `stlive test run`
 
 ```
-Run a TestCase class, 'Class>>testSelector', or a package (also repeats single tests)
+Run tests: classes, packages, 'Class>>selector' or glob patterns (`*`, `?`); --fresh runs them in a new image
 
-Usage: stlive test run [OPTIONS] <TARGET>
+Usage: stlive test run [OPTIONS] [TARGETS]...
 
 Arguments:
-  <TARGET>  
+  [TARGETS]...  Targets, e.g. 'Orbit-*-Tests' Other-Tests 'Foo>>testBar'. With --fresh, the default is every package the load added that ends in -Tests
 
 Options:
-  -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
-      --timeout <TIMEOUT>      Milliseconds per test
-      --keep-sessions          Keep every failing test's debug session (default: one per failure group, the rest are ended)
-      --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
-      --discard-sessions       End all sessions of this run, including the representative one per group
-      --pretty                 Pretty-print JSON
-      --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
-      --skips-fail             Exit with 1 when tests were skipped (`self skip`), for projects whose policy treats skips as failures
-      --tag <TAG>              Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
-      --text                   Human-readable indented text instead of JSON (exit codes are unchanged)
-  -h, --help                   Print help
+  -i, --instance <INSTANCE>          Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --timeout <TIMEOUT>            Milliseconds per test
+      --keep-sessions                Keep every failing test's debug session (default: one per failure group, the rest are ended)
+      --state-dir <STATE_DIR>        Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
+      --discard-sessions             End all sessions of this run, including the representative one per group
+      --pretty                       Pretty-print JSON
+      --log <LOG>                    Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --skips-fail                   Exit with 1 when tests were skipped (`self skip`), for projects whose policy treats skips as failures
+      --fresh                        Run in a FRESH temporary instance: start it from the template, load --load with --repository, run the targets, then stop it and delete its files. Exit 6 when the load fails (error or warnings). Your own instance (-i) is never touched
+      --tag <TAG>                    Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
+      --load <LOAD>                  With --fresh: baseline to load, without the BaselineOf prefix (e.g. Orbit)
+      --text                         Human-readable indented text instead of JSON (exit codes are unchanged)
+      --repository <REPOSITORY>      With --fresh: repository of the baseline, e.g. tonel:///abs/path/src
+      --group <GROUPS>               With --fresh: groups to load (repeatable); default group if none
+      --keep                         With --fresh: keep the instance running after the run (its name is in the output) to debug the failing tests with `stlive -i NAME debug ...`; stop it with `stlive -i NAME stop --force`
+      --load-timeout <LOAD_TIMEOUT>  With --fresh: milliseconds the baseline load may take (default 600000)
+  -h, --help                         Print help
 ```
 
 ## `stlive package`

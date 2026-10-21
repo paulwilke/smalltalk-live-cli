@@ -5,10 +5,14 @@
 //!
 //! Exit codes: 0 ok · 1 command failed / exception in image / failing tests · 2 usage
 //!             3 image not running or unreachable · 4 protocol error · 5 timeout
+//!             6 `test run --fresh`: the baseline did not load cleanly (error or warnings)
 
 mod init;
 mod platform;
 mod save;
+mod testrun;
+
+use testrun::{FreshSpec, TestOpts};
 
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
@@ -341,9 +345,11 @@ enum PackageCmd {
 enum TestCmd {
     /// List test classes (substring or glob on class or package name)
     List { pattern: Option<String>, #[arg(long)] limit: Option<u64> },
-    /// Run a TestCase class, 'Class>>testSelector', or a package (also repeats single tests)
+    /// Run tests: classes, packages, 'Class>>selector' or glob patterns (`*`, `?`); --fresh runs them in a new image
     Run {
-        target: String,
+        /// Targets, e.g. 'Orbit-*-Tests' Other-Tests 'Foo>>testBar'. With --fresh, the default is every package the
+        /// load added that ends in -Tests
+        targets: Vec<String>,
         /// Milliseconds per test
         #[arg(long)]
         timeout: Option<u64>,
@@ -356,6 +362,27 @@ enum TestCmd {
         /// Exit with 1 when tests were skipped (`self skip`), for projects whose policy treats skips as failures
         #[arg(long)]
         skips_fail: bool,
+        /// Run in a FRESH temporary instance: start it from the template, load --load with --repository, run the
+        /// targets, then stop it and delete its files. Exit 6 when the load fails (error or warnings). Your own
+        /// instance (-i) is never touched
+        #[arg(long)]
+        fresh: bool,
+        /// With --fresh: baseline to load, without the BaselineOf prefix (e.g. Orbit)
+        #[arg(long, requires = "fresh")]
+        load: Option<String>,
+        /// With --fresh: repository of the baseline, e.g. tonel:///abs/path/src
+        #[arg(long, requires = "fresh")]
+        repository: Option<String>,
+        /// With --fresh: groups to load (repeatable); default group if none
+        #[arg(long = "group", requires = "fresh")]
+        groups: Vec<String>,
+        /// With --fresh: keep the instance running after the run (its name is in the output) to debug the failing
+        /// tests with `stlive -i NAME debug ...`; stop it with `stlive -i NAME stop --force`
+        #[arg(long, requires = "fresh")]
+        keep: bool,
+        /// With --fresh: milliseconds the baseline load may take (default 600000)
+        #[arg(long, requires = "fresh")]
+        load_timeout: Option<u64>,
     },
 }
 
@@ -527,6 +554,7 @@ fn early_summary(cmd: &Cmd) -> String {
         Cmd::Run { eval, file, .. } => short(&eval.clone().or_else(|| file.as_ref().map(|f| f.display().to_string())).unwrap_or_default()),
         Cmd::Save { package, all, .. } | Cmd::Drift { package, all, .. } => if *all { "--all".into() } else { package.clone().unwrap_or_default() },
         Cmd::Load { baseline, .. } => baseline.clone(),
+        Cmd::Test(TestCmd::Run { targets, .. }) => short(&targets.join(" ")),
         Cmd::OpenUi { url, .. } => short(url),
         _ => String::new(),
     }
@@ -784,11 +812,19 @@ fn list_instances(inst: &Instance, pretty: bool) {
 }
 
 fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool, pretty: bool) {
+    match start_quiet(inst, vm, image, gui) {
+        Ok(result) => emit(&json!({"ok": true, "result": result}), pretty),
+        Err((code, err, msg)) => die(code, err, msg, pretty),
+    }
+}
+
+/// Start an instance and wait for its port. `Err((exit code, error code, message))` instead of exiting, so the
+/// fresh test run can start a temporary instance the same way (image copy from the template included).
+fn start_quiet(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool) -> Result<Value, (i32, &'static str, String)> {
     if inst.alive() && inst.port_info().is_some() {
-        let r = call(inst, "ping", json!({}), Duration::from_secs(3), pretty);
+        let r = try_call(inst, "ping", json!({}), Duration::from_secs(3))?;
         if r["ok"] == json!(true) {
-            emit(&json!({"ok": true, "result": {"already_running": true, "port": inst.port_info().unwrap()["port"]}}), pretty);
-            return;
+            return Ok(json!({"already_running": true, "port": inst.port_info().unwrap()["port"]}));
         }
     }
     let cfg_path = inst.path("config.json");
@@ -801,11 +837,11 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool
             Some((tvm, timg)) => {
                 let img = match i {
                     Some(i) => i,
-                    None => init::instance_image(&timg, &inst.dir, &inst.name).unwrap_or_else(|e| die(3, "image_copy_failed", e, pretty)),
+                    None => init::instance_image(&timg, &inst.dir, &inst.name).map_err(|e| (3, "image_copy_failed", e))?,
                 };
                 (v.unwrap_or(tvm), img)
             }
-            None => die(2, "not_initialized", "No Pharo set up yet. Run `stlive init` once (downloads Pharo 13 and builds the image), or pass --vm and --image.".into(), pretty),
+            None => return Err((2, "not_initialized", "No Pharo set up yet. Run `stlive init` once (downloads Pharo 13 and builds the image), or pass --vm and --image.".into())),
         },
     };
     // A deleted instance image is rebuilt from the template.
@@ -845,27 +881,36 @@ fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool
     let child = cmd.spawn();
     let child = match child {
         Ok(c) => c,
-        Err(e) => die(3, "spawn_failed", format!("Cannot start {}: {}", vm.display(), e), pretty),
+        Err(e) => return Err((3, "spawn_failed", format!("Cannot start {}: {}", vm.display(), e))),
     };
     let _ = std::fs::write(inst.path("pid"), child.id().to_string());
     let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         if let Some(info) = inst.port_info() {
-            emit(&json!({"ok": true, "result": {"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": inst.path("log")}}), pretty);
-            return;
+            return Ok(json!({"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": inst.path("log")}));
         }
         if !inst.alive() {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    die(3, "start_failed", format!("Image did not publish a port in time; see {}", inst.path("log").display()), pretty);
+    Err((3, "start_failed", format!("Image did not publish a port in time; see {}", inst.path("log").display())))
 }
 
 fn stop(inst: &Instance, force: bool, pretty: bool) {
     if !force {
         die(2, "confirmation_required", "Stopping discards all unsaved image state and debug sessions. Re-run with --force (use `stlive image save` first to keep state).".into(), pretty);
     }
+    stop_quiet(inst);
+    // a temporary instance (kept by `test run --fresh --keep`) has no use after its stop: its files go too
+    if testrun::is_temporary(inst) {
+        testrun::remove_files(inst);
+    }
+    emit(&json!({"ok": true, "result": {"stopped": true}}), pretty);
+}
+
+/// Quit an instance (its image is kept on disk) and wait for the process; no output.
+fn stop_quiet(inst: &Instance) {
     let _ = try_call(inst, "image.stop", json!({"force": true}), Duration::from_secs(5)); // a dying image may not answer; fall through to the kill below
     let deadline = Instant::now() + Duration::from_secs(10);
     while inst.alive() && Instant::now() < deadline {
@@ -878,7 +923,6 @@ fn stop(inst: &Instance, force: bool, pretty: bool) {
     }
     let _ = std::fs::remove_file(inst.path("port.json"));
     let _ = std::fs::remove_file(inst.path("pid"));
-    emit(&json!({"ok": true, "result": {"stopped": true}}), pretty);
 }
 
 // ---------------------------------------------------------------- save / clone / diff
@@ -1165,15 +1209,22 @@ fn main() {
             opt(&mut m, "limit", limit);
             ("find.package".into(), Value::Object(m), None)
         }
-        Cmd::Test(TestCmd::Run { target, timeout, keep_sessions, discard_sessions, skips_fail }) => {
-            let mut m = Map::new();
-            m.insert("target".into(), target.into());
-            opt(&mut m, "timeout", timeout);
-            if keep_sessions { m.insert("keep_sessions".into(), true.into()); }
-            if discard_sessions { m.insert("discard_sessions".into(), true.into()); }
+        Cmd::Test(TestCmd::Run { targets, timeout, keep_sessions, discard_sessions, skips_fail, fresh, load, repository, groups, keep, load_timeout }) => {
             SKIPS_FAIL.store(skips_fail, std::sync::atomic::Ordering::Relaxed);
-            // the timeout is per test; the socket budget is for the whole run (large suites take minutes)
-            ("test.run".into(), Value::Object(m), Some((timeout.unwrap_or(10_000) * 20).max(600_000)))
+            let opts = TestOpts { timeout, keep_sessions, discard_sessions, skips_fail };
+            if fresh {
+                match (load, repository) {
+                    (Some(baseline), Some(repository)) => {
+                        let spec = FreshSpec { baseline, repository, groups, keep, load_timeout };
+                        testrun::fresh_test_run(&inst, spec, targets, opts, pretty)
+                    }
+                    _ => die(2, "missing_argument", "--fresh needs --load <Baseline> and --repository <URL>".into(), pretty),
+                }
+            }
+            if targets.is_empty() {
+                die(2, "missing_argument", "Give at least one target: a test class, a package, 'Class>>selector', or a glob pattern such as 'Orbit-*-Tests' (see: stlive test list)".into(), pretty);
+            }
+            testrun::test_run(&inst, targets, opts, pretty)
         }
         Cmd::Debug(d) => match d {
             DebugCmd::List { all } => ("debug.list".into(), json!({"all": all}), None),
@@ -1258,10 +1309,6 @@ fn main() {
     let mut resp = call(&inst, &cmd, args, read_timeout, pretty);
     if cmd == "changes.show" {
         add_diff(&mut resp);
-    }
-    if cmd == "test.run" && SKIPS_FAIL.load(std::sync::atomic::Ordering::Relaxed) && resp["result"]["skipped"].as_u64().unwrap_or(0) > 0 {
-        resp["result"]["skips_fail"] = json!(true);
-        resp["result"]["note"] = json!("Skipped tests count as failures (--skips-fail): exit code 1.");
     }
     emit(&resp, pretty);
     std::process::exit(exit_code_for(&resp));

@@ -1250,6 +1250,21 @@ StLiveCommands >> testsFor: target [
 ]
 
 { #category : 'tests' }
+StLiveCommands >> testsForAll: targets [
+	"The TestCase objects of several targets (see testsFor:), each test once: a class named and also in a package
+	that is run as well counts once."
+	| seen list |
+	seen := Set new.
+	list := OrderedCollection new.
+	targets do: [ :target |
+		(self testsFor: target) do: [ :t |
+			| id |
+			id := self testIdOf: t.
+			(seen includes: id) ifFalse: [ seen add: id. list add: t ] ] ].
+	^ list asArray
+]
+
+{ #category : 'tests' }
 StLiveCommands >> terminateOldTestSessions [
 	server sessions valuesDo: [ :s |
 		(s isSuspended and: [ (s origin at: 'cmd') = 'test.run' ]) ifTrue: [ server terminateSession: s ] ]
@@ -1341,18 +1356,34 @@ StLiveCommands >> cmdTestList: args [
 ]
 
 { #category : 'tests' }
+StLiveCommands >> cmdTestNames: args [
+	"Names for the CLI's glob expansion of test targets (no suites are built): every package with the number of its
+	concrete test classes, and the names of all concrete test classes."
+	| packages classes |
+	packages := PackageOrganizer default packages asSortedCollection: [ :a :b | a name <= b name ].
+	classes := (Smalltalk globals allClasses select: [ :c | c isTestCase and: [ c isAbstract not ] ]) collect: [ :c | c name ].
+	^ self ok: (self m: {
+		'packages' -> (packages asArray collect: [ :p | self m: {
+			'name' -> p name.
+			'test_classes' -> (p definedClasses count: [ :c | c isTestCase and: [ c isAbstract not ] ]) } ]).
+		'test_classes' -> classes asSortedCollection asArray })
+]
+
+{ #category : 'tests' }
 StLiveCommands >> cmdTestRun: args [
 	"Run tests one by one in their own jobs. A failing test leaves a debug session; only the first session of each
 	failure group is kept (keep_sessions keeps all, discard_sessions none) - the others end immediately, so a run
 	with hundreds of red tests never evicts the sessions it reports. Skipped tests (`self skip`) are counted
-	separately and are neither passed nor failed. A ParametrizedTestCase runs once per parameter combination."
-	| target tests timeout passed records started keep discard groups skipped representative |
-	target := self need: 'target' in: args.
+	separately and are neither passed nor failed. A ParametrizedTestCase runs once per parameter combination.
+	Several targets (`targets`, each as in testsFor:) run as one run; the CLI expands glob patterns before."
+	| targets tests timeout passed records started keep discard groups skipped representative |
+	targets := (args at: 'targets' ifAbsent: [ { self need: 'target' in: args } ]) asArray.
+	targets isEmpty ifTrue: [ self fail: 'missing_argument' message: 'Give at least one test target' ].
 	timeout := self int: 'timeout' in: args default: 10000.
 	keep := (args at: 'keep_sessions' ifAbsent: [ false ]) == true.
 	discard := (args at: 'discard_sessions' ifAbsent: [ false ]) == true.
 	keep ifFalse: [ self terminateOldTestSessions ].
-	tests := self testsFor: target.
+	tests := self testsForAll: targets.
 	passed := 0.
 	records := OrderedCollection new.
 	skipped := OrderedCollection new.
@@ -1386,7 +1417,8 @@ StLiveCommands >> cmdTestRun: args [
 								ifFalse: [ (record at: 'session') ifNotNil: [ :id | representative at: sig put: id ] ] ] ] ] ].
 	groups := self groupFailures: records keep: keep discard: discard.
 	^ self ok: (self m: {
-		'target' -> target.
+		'target' -> (targets inject: '' into: [ :acc :t | acc isEmpty ifTrue: [ t ] ifFalse: [ acc , ' ' , t ] ]).
+		'targets' -> targets.
 		'ran' -> tests size.
 		'passed' -> passed.
 		'failed' -> records size.

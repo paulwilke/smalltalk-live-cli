@@ -138,6 +138,120 @@ grep -q "second line'" src/Demo/Banner.class.st && ! grep -q $'\r' src/Demo/Bann
 out=$($S method compile Banner - <<< $'broken\n\t| s |\n\ts := NoSuchBannerThing new.\n\t^ \'first\nsecond\''); check "compile error in a multi-line method names the variable" '.error.variable' NoSuchBannerThing
 check "compile error in a multi-line method has line 3" '[.error.line,.error.column]|join(":")' '3:7'
 
+# --- 0.8.0: test run with patterns, test run --fresh
+# several targets and glob patterns run as one run; a pattern is expanded over package and test class names
+for p in PatA PatB; do
+  $S class create ${p}Test --superclass TestCase --package $p-Tests >/dev/null
+  $S method compile ${p}Test --protocol t - <<< $'testOk\n\tself assert: true' >/dev/null
+done
+out=$($S test run 'Pat*-Tests'); check "pattern runs every matching package" '.result.expanded["Pat*-Tests"]|join(",")' "PatA-Tests,PatB-Tests"
+check "pattern: counts of the expanded packages" '[.result.ran,.result.passed,.result.failed]|join(",")' "2,2,0"
+out=$($S test run 'PatA-Tests' PatBTest 'PatA-Tests'); check "several targets: one run, each test once" '[(.result.targets|join(",")),.result.ran]|join(" ")' "PatA-Tests,PatBTest 2"
+out=$($S test run 'PatBTe*'); check "a pattern also matches test class names" '.result.targets|join(",")' "PatBTest"
+out=$($S test run 'Nothing*-Tests'); RC=$?
+check "a pattern matching nothing is no_tests_matched" '.error.code' no_tests_matched
+check "no_tests_matched names the pattern" '.error.pattern' 'Nothing*-Tests'
+[ "$RC" -eq 1 ] && { pass=$((pass+1)); echo "ok   - no_tests_matched exits 1"; } || { fail=$((fail+1)); echo "FAIL - no_tests_matched exit code $RC"; }
+
+# --fresh: a temporary instance from the template loads the baseline, runs the -Tests packages, is stopped and deleted
+mkdir -p freshsrc/BaselineOfE2EFresh freshsrc/E2EFresh freshsrc/E2EFresh-Tests
+printf "Package { #name : 'BaselineOfE2EFresh' }\n" > freshsrc/BaselineOfE2EFresh/package.st
+printf "Package { #name : 'E2EFresh' }\n" > freshsrc/E2EFresh/package.st
+printf "Package { #name : 'E2EFresh-Tests' }\n" > freshsrc/E2EFresh-Tests/package.st
+cat > freshsrc/BaselineOfE2EFresh/BaselineOfE2EFresh.class.st <<'ST'
+Class {
+	#name : 'BaselineOfE2EFresh',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfE2EFresh'
+}
+
+{ #category : 'baselines' }
+BaselineOfE2EFresh >> baseline: spec [
+	<baseline>
+	spec for: #common do: [
+		spec package: 'E2EFresh'.
+		spec package: 'E2EFresh-Tests' with: [ spec requires: #('E2EFresh') ] ]
+]
+ST
+cat > freshsrc/E2EFresh/E2EThing.class.st <<'ST'
+Class {
+	#name : 'E2EThing',
+	#superclass : 'Object',
+	#package : 'E2EFresh'
+}
+
+{ #category : 'x' }
+E2EThing >> answer [
+	^ 42
+]
+ST
+cat > freshsrc/E2EFresh-Tests/E2EThingTest.class.st <<'ST'
+Class {
+	#name : 'E2EThingTest',
+	#superclass : 'TestCase',
+	#package : 'E2EFresh-Tests'
+}
+
+{ #category : 'x' }
+E2EThingTest >> testOk [
+	self assert: E2EThing new answer equals: 42
+]
+
+{ #category : 'x' }
+E2EThingTest >> testRed [
+	self assert: E2EThing new answer equals: 0
+]
+ST
+out=$($S package list 'E2E*'); check "the normal instance has no fresh packages before" '.result.total' 0
+CHANGES_BEFORE=$($S changes list | jq -r .result.total)
+out=$($S test run --fresh --load E2EFresh --repository "tonel://$WORK/freshsrc"); RC=$?
+check "fresh: ran, passed, failed" '[.result.ran,.result.passed,.result.failed]|join(",")' "2,1,1"
+check "fresh: the load is reported under load" '.result.load.new_package_count' 3
+check "fresh: default targets are the added -Tests packages" '.result.targets|join(",")' "E2EFresh-Tests"
+check "fresh: the instance is not kept" '.result.kept' false
+[ "$RC" -eq 1 ] && { pass=$((pass+1)); echo "ok   - fresh: failing test exits 1"; } || { fail=$((fail+1)); echo "FAIL - fresh exit code $RC"; }
+mkdir -p freshbad/BaselineOfE2EBad freshbad/E2EBad
+printf "Package { #name : 'BaselineOfE2EBad' }\n" > freshbad/BaselineOfE2EBad/package.st
+printf "Package { #name : 'E2EBad' }\n" > freshbad/E2EBad/package.st
+cat > freshbad/BaselineOfE2EBad/BaselineOfE2EBad.class.st <<'ST'
+Class {
+	#name : 'BaselineOfE2EBad',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfE2EBad'
+}
+
+{ #category : 'baselines' }
+BaselineOfE2EBad >> baseline: spec [
+	<baseline>
+	spec for: #common do: [ spec package: 'E2EBad' ]
+]
+ST
+cat > freshbad/E2EBad/E2EBadThing.class.st <<'ST'
+Class {
+	#name : 'E2EBadThing',
+	#superclass : 'Object',
+	#package : 'E2EBad'
+}
+
+{ #category : 'x' }
+E2EBadThing >> broken [
+	^ ( 1 +
+]
+ST
+out=$($S test run --fresh --load E2EBad --repository "tonel://$WORK/freshbad"); RC=$?
+check "fresh: a compile error fails with load_failed" '.error.code' load_failed
+check "fresh: the load error shows the compile error" '.error.load_error.message' "Variable or expression expected"
+[ "$RC" -eq 6 ] && { pass=$((pass+1)); echo "ok   - fresh: failed load exits 6"; } || { fail=$((fail+1)); echo "FAIL - failed load exit code $RC"; }
+out=$($S test run --fresh --keep --load E2EFresh --repository "tonel://$WORK/freshsrc"); RC=$?
+KEPT=$(echo "$out" | jq -r .result.instance)
+check "fresh --keep: the output names the instance" '.result.kept' true
+out=$($S -i "$KEPT" debug list); check "fresh --keep: the failing test's debug session can be listed" '.result.sessions[0].type' TestFailure
+$S -i "$KEPT" stop --force >/dev/null
+[ ! -e "$WORK/.stlive/$KEPT.image" ] && { pass=$((pass+1)); echo "ok   - fresh --keep: stop removes the temporary instance"; } || { fail=$((fail+1)); echo "FAIL - kept instance files left"; }
+out=$($S changes list | jq -r .result.total); [ "$out" = "$CHANGES_BEFORE" ] && { pass=$((pass+1)); echo "ok   - the normal instance's changes are unchanged by fresh runs"; } || { fail=$((fail+1)); echo "FAIL - changes changed: $out vs $CHANGES_BEFORE"; }
+out=$($S package list 'E2E*'); check "the normal instance has no fresh packages afterwards" '.result.total' 0
+out=$($S instances); check "no temporary instance is left behind" '[.result.instances[]|select(.name|startswith("fresh-"))]|length' 0
+
 # --- attach the server to an image that is already running
 PORT=$(jq -r .port .stlive/default.port.json)
 out=$($S -i second attach --port "$PORT"); check "attach to a running image" '.result.attached'
