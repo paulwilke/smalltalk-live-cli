@@ -70,7 +70,35 @@ pub fn detach(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    // A child with redirected stdio is created with bInheritHandles, which hands it every inheritable handle of
+    // this process, among them our own stdin/stdout/stderr when they are pipes (a script reading the answer of
+    // `stlive start`). The caller then waits for its pipe to close, and the detached image never closes it:
+    // the script hangs although `start` answered. So our standard handles are made non-inheritable first.
+    unsafe {
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let h = GetStdHandle(id);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
     cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+}
+#[cfg(windows)]
+const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
+#[cfg(windows)]
+const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // (DWORD)-11
+#[cfg(windows)]
+const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4; // (DWORD)-12
+#[cfg(windows)]
+const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+#[cfg(windows)]
+const INVALID_HANDLE_VALUE: *mut core::ffi::c_void = -1isize as *mut core::ffi::c_void;
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetStdHandle(std_handle: u32) -> *mut core::ffi::c_void;
+    fn SetHandleInformation(object: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
 }
 
 /// Symlink `link` -> `target`; where symlinks need privileges (Windows) copy the file instead.
