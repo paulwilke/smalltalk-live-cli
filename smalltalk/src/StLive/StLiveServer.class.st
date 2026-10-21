@@ -23,7 +23,10 @@ Class {
 		'portFile',
 		'suppressed',
 		'backgroundErrors',
-		'previousErrorHandler'
+		'previousErrorHandler',
+		'acceptor',
+		'connections',
+		'session'
 	],
 	#classVars : [
 		'Current',
@@ -74,10 +77,37 @@ StLiveServer class >> recordSystemPackagesFrom: names [
 
 { #category : 'starting' }
 StLiveServer class >> startFromEnvironment [
-	"STLIVE_PORTFILE: where to publish {port, epoch}. Without it the port is only printed."
-	| env |
+	"STLIVE_PORTFILE: where to publish {port, epoch}. Without it the port is only printed. The result goes to the
+	instance log (the image's stdout), so a start that does not publish a port can be explained from the log."
+	| env path port |
 	env := Smalltalk os environment.
-	^ self current startPortFile: (env at: 'STLIVE_PORTFILE' ifAbsent: [ nil ])
+	path := env at: 'STLIVE_PORTFILE' ifAbsent: [ nil ].
+	port := self current startPortFile: path.
+	"the server runs already: a failure to log this must not end the start"
+	[ Stdio stdout
+		nextPutAll: (path
+			ifNil: [ 'stlive: listening on 127.0.0.1 port ' , port printString ]
+			ifNotNil: [ :file | 'stlive: port file written ' , file , ' port ' , port printString ]);
+		lf;
+		flush ] on: Error do: [ :e | nil ].
+	^ port
+]
+
+{ #category : 'session hooks' }
+StLiveServer class >> registerSessionHandler [
+	"SessionManager calls startUp: and shutDown: of this class at every start of the image and around every snapshot.
+	Registering again replaces the earlier registration."
+	SessionManager default registerUserClassNamed: self name
+]
+
+{ #category : 'session hooks' }
+StLiveServer class >> startUp: isImageStarting [
+	Current ifNotNil: [ :server | server startUp: isImageStarting ]
+]
+
+{ #category : 'session hooks' }
+StLiveServer class >> shutDown: isImageQuitting [
+	Current ifNotNil: [ :server | server shutDown: isImageQuitting ]
 ]
 
 { #category : 'instance creation' }
@@ -101,6 +131,7 @@ StLiveServer >> initialize [
 	changes := OrderedCollection new.
 	startedAt := DateAndTime now.
 	running := false.
+	connections := IdentitySet new.
 	suppressed := IdentitySet new.
 	describer := StLiveDescriber on: self.
 	commands := StLiveCommands on: self
@@ -307,53 +338,180 @@ StLiveServer >> sessionFor: anId [
 
 { #category : 'transport' }
 StLiveServer >> startPortFile: aPath [
+	"Listens on 127.0.0.1, publishes the port (in aPath, when given) and starts the acceptor. The port file is written
+	before the acceptor exists, so a failure here leaves no process that answers requests.
+	When this server already listens (an attach to an image that runs it), the listener stays: the port already
+	published keeps working, and the port file names it."
+	| port |
+	(running and: [ listener notNil and: [ listener isValid ] ])
+		ifTrue: [
+			port := listener localPort.
+			self class registerSessionHandler.
+			aPath ifNotNil: [ self writePortFile: aPath port: port ].
+			self ensureAcceptor.
+			^ port ].
+	self stopAcceptor.
+	self closeListener.
 	portFile := aPath.
+	session := Smalltalk session.
 	listener := Socket newTCP.
 	listener listenOn: 0 backlogSize: 16 interface: #[ 127 0 0 1 ].
+	port := listener localPort.
 	running := true.
+	self class registerSessionHandler.
 	StLiveTranscriptTee install.
 	self subscribeToSystemChanges.
 	[ self installBackgroundErrorHandler ] on: Error do: [ :e | nil ].
-	[ self acceptLoop ] forkAt: Processor userInterruptPriority named: 'stlive-acceptor'.
-	aPath ifNotNil: [
-		aPath asFileReference writeStreamDo: [ :s |
-			s nextPutAll: (STON toJsonString: (OrderedDictionary new
-				at: 'port' put: listener localPort;
-				at: 'epoch' put: epoch;
-				at: 'pharo' put: SystemVersion current version;
-				yourself)) ] ].
-	^ listener localPort
+	aPath ifNotNil: [ self writePortFile: aPath port: port ].
+	self startAcceptor.
+	^ port
+]
+
+{ #category : 'transport' }
+StLiveServer >> writePortFile: aPath port: aPort [
+	aPath asFileReference writeStreamDo: [ :s |
+		s nextPutAll: (STON toJsonString: (OrderedDictionary new
+			at: 'port' put: aPort;
+			at: 'epoch' put: epoch;
+			at: 'pharo' put: SystemVersion current version;
+			yourself)) ]
+]
+
+{ #category : 'transport' }
+StLiveServer >> ensureAcceptor [
+	"One live acceptor per image: an acceptor of an earlier version of this class (in an attached image) counts too."
+	(Process allInstances anySatisfy: [ :p | p name = 'stlive-acceptor' and: [ p isTerminated not ] ])
+		ifFalse: [ self startAcceptor ]
 ]
 
 { #category : 'transport' }
 StLiveServer >> stop [
 	running := false.
+	self stopAcceptor.
 	self uninstallBackgroundErrorHandler.
-	listener ifNotNil: [ listener closeAndDestroy. listener := nil ]
+	self closeListener
+]
+
+{ #category : 'transport' }
+StLiveServer >> startAcceptor [
+	"The acceptor runs at userInterruptPriority, above jobs (userSchedulingPriority): status and debug answer while a
+	job runs, and a job cannot keep the port from being served. At the job's priority a job that does not yield
+	would starve the acceptor, so the priority stays."
+	| process |
+	process := [ self acceptLoop ] newProcess.
+	process priority: Processor userInterruptPriority; name: 'stlive-acceptor'.
+	acceptor := process.
+	process resume
+]
+
+{ #category : 'transport' }
+StLiveServer >> stopAcceptor [
+	| process |
+	process := acceptor.
+	acceptor := nil.
+	(process notNil and: [ process ~~ Processor activeProcess and: [ process isTerminated not ] ])
+		ifTrue: [ process terminate ]
+]
+
+{ #category : 'transport' }
+StLiveServer >> closeListener [
+	| socket |
+	socket := listener.
+	listener := nil.
+	socket ifNotNil: [ [ socket closeAndDestroy ] on: Error do: [ :e | nil ] ]
 ]
 
 { #category : 'transport' }
 StLiveServer >> acceptLoop [
-	[ running ] whileTrue: [
-		| client |
-		client := listener waitForAcceptFor: 1.
-		client ifNotNil: [
-			[ self serve: client ] forkAt: Processor userInterruptPriority named: 'stlive-connection' ] ]
+	"Body of the acceptor process. It ends as soon as it is no longer the acceptor, the server is stopped, its listener
+	is closed or invalid, or the image was started again. A process saved with the image must never serve the
+	listener of an earlier session: its sockets are gone, and waiting on them returns at once (a spin)."
+	| mySession |
+	mySession := session.
+	[ acceptor == Processor activeProcess
+		and: [ running
+		and: [ listener notNil
+		and: [ listener isValid
+		and: [ Smalltalk session == mySession ] ] ] ] ] whileTrue: [
+		| socket client |
+		socket := listener.
+		client := socket waitForAcceptFor: 1.
+		client
+			ifNil: [ (Delay forMilliseconds: 10) wait ]
+			ifNotNil: [ self startConnectionFor: client ] ]
+]
+
+{ #category : 'transport' }
+StLiveServer >> startConnectionFor: aSocket [
+	| process |
+	process := [ self serve: aSocket ] newProcess.
+	process priority: Processor userInterruptPriority; name: 'stlive-connection'.
+	self connectionProcesses add: process.
+	process resume
+]
+
+{ #category : 'transport' }
+StLiveServer >> connectionProcesses [
+	"Processes serving connections of this session (nil in an image saved before this instance variable existed)."
+	^ connections ifNil: [ connections := IdentitySet new ]
 ]
 
 { #category : 'transport' }
 StLiveServer >> serve: aSocket [
 	| stream line response |
-	stream := SocketStream on: aSocket.
+	[ stream := SocketStream on: aSocket.
 	stream binary.
 	stream timeout: 30.
 	[ line := stream upTo: 10.
 	response := self handleLine: line utf8Decoded.
 	stream nextPutAll: response utf8Encoded; nextPut: 10; flush ]
 		on: Error
-		do: [ :e | Stdio stdout nextPutAll: 'connection error: ' , e class name , ' ' , e messageText asString; lf; flush ].
+		do: [ :e |
+			"A connection of an earlier session (a save that was resumed) has no socket any more: its answer is lost
+			anyway, and reporting it would print into the stdout of whatever runs that image."
+			aSocket isValid ifTrue: [
+				Stdio stdout nextPutAll: 'connection error: ' , e class name , ' ' , e messageText asString; lf; flush ] ].
 	[ stream close ] on: Error do: [ :e | nil ].
-	aSocket closeAndDestroy
+	aSocket closeAndDestroy ]
+		ensure: [ self connectionProcesses remove: Processor activeProcess ifAbsent: [ nil ] ]
+]
+
+{ #category : 'session hooks' }
+StLiveServer >> startUp: isImageStarting [
+	"SessionManager hook, run when the image starts and after every snapshot. isImageStarting is true when the image
+	was started from a saved file: the listener, the acceptor and the connections belong to the earlier session and
+	are dropped (serve.st starts the server again). False: the session goes on after a save, its listener is still
+	valid, so the acceptor starts again."
+	[ isImageStarting
+		ifTrue: [ self forgetEarlierSession ]
+		ifFalse: [ (running and: [ listener notNil and: [ listener isValid ] ]) ifTrue: [ self startAcceptor ] ] ]
+		on: Error
+		do: [ :e | Stdio stdout nextPutAll: 'stlive: restarting the server after the snapshot failed: ' , e messageText asString; lf; flush ]
+]
+
+{ #category : 'session hooks' }
+StLiveServer >> shutDown: isImageQuitting [
+	"SessionManager hook, run before every snapshot (quitting or not). The acceptor is a process that must not be saved:
+	a process saved in its loop runs first after the next start and spins on the old listener. Connections are left
+	alone: the one that asked for the snapshot is waiting for its answer, the others are dropped at the next start.
+	A quitting image closes its listener as well."
+	[ self stopAcceptor.
+	isImageQuitting ifTrue: [ self closeListener ] ]
+		on: Error
+		do: [ :e | Stdio stdout nextPutAll: 'stlive: stopping the server before the snapshot failed: ' , e messageText asString; lf; flush ]
+]
+
+{ #category : 'session hooks' }
+StLiveServer >> forgetEarlierSession [
+	"Drops what the earlier session left: the listener, the acceptor and the connections. Nothing is closed or
+	terminated here. Terminating a process restored from the snapshot hangs the start (measured on Pharo 13.1); the
+	dropped processes end by themselves: a socket of the earlier session is gone, so each one answers into an error
+	(logged as a connection error) and finishes. An acceptor of the earlier session exits at its next check, because
+	the session it belongs to is not the current one."
+	running := false.
+	acceptor := nil.
+	listener := nil.
+	self connectionProcesses removeAll
 ]
 
 { #category : 'transport' }

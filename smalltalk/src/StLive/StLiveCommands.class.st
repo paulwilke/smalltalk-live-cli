@@ -644,7 +644,7 @@ StLiveCommands >> cmdImageExport: args [
 	server sessions values do: [ :s | s isSuspended ifTrue: [ server terminateSession: s ] ].
 	script := (args at: 'keep_server' ifAbsent: [ false ]) == true
 		ifTrue: [ '' ]
-		ifFalse: [ 'StLiveServer current stop. StLiveTranscriptTee uninstall. SystemAnnouncer uniqueInstance unsubscribe: StLiveServer current. StLiveServer reset.' ].
+		ifFalse: [ 'StLiveServer current stop. SessionManager default unregisterClassNamed: #StLiveServer. StLiveTranscriptTee uninstall. SystemAnnouncer uniqueInstance unsubscribe: StLiveServer current. StLiveServer reset.' ].
 	"Runs after this response is sent, in a process that does not depend on the package it removes."
 	[ (Delay forMilliseconds: 400) wait.
 	(script isEmpty not) ifTrue: [

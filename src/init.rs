@@ -77,10 +77,19 @@ current := (Smalltalk globals at: #StLiveServer ifAbsent: [ nil ]) ifNotNil: [ :
 		do: [ :e | Stdio stdout nextPutAll: 'stlive: could not upgrade the server in this image: ' , e messageText asString; lf; flush ] ].
 "#;
 
-/// Startup script run by every `start`: upgrade (if needed), then start the server.
+/// Startup script run by every `start`: upgrade (if needed), then start the server. Its lines (stdout) go to the
+/// instance log: `server starting`, then `port file written` (from startFromEnvironment) or `server did not start`.
 pub fn serve_st() -> String {
-    format!("{}(Smalltalk globals at: #StLiveServer) startFromEnvironment.\n", UPGRADE_ST)
+    format!("{}{}", UPGRADE_ST, SERVE_BODY_ST)
 }
+
+const SERVE_BODY_ST: &str = r#"Stdio stdout nextPutAll: 'stlive: server starting'; lf; flush.
+[ (Smalltalk globals at: #StLiveServer) startFromEnvironment ]
+	on: Error
+	do: [ :e |
+		Stdio stdout nextPutAll: 'stlive: server did not start: ' , e class name , ': ' , e messageText asString; lf; flush.
+		Smalltalk exitFailure ].
+"#;
 
 /// Script of `stlive run`: upgrade (if needed), load sources, evaluate, write results to files.
 pub fn run_st() -> String {

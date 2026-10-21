@@ -151,3 +151,111 @@ StLiveServerTest >> testInternalErrorNamesTheExceptionClass [
 	response := server internalError: (Error new messageText: 'boom').
 	self assert: ((response at: 'error') at: 'message') equals: 'Error: boom'
 ]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testSessionHandlerIsRegistered [
+	StLiveServer registerSessionHandler.
+	self assert: (SessionManager default hasRegistered: 'StLiveServer')
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testShutDownStopsTheAcceptorProcess [
+	| process |
+	process := [ Semaphore new wait ] newProcess.
+	process resume.
+	server instVarNamed: 'acceptor' put: process.
+	server shutDown: false.
+	self assert: process isTerminated.
+	self assert: (server instVarNamed: 'acceptor') isNil
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testShutDownBeforeASaveKeepsTheListener [
+	| socket |
+	socket := Socket newTCP.
+	server instVarNamed: 'listener' put: socket.
+	server shutDown: false.
+	self assert: (server instVarNamed: 'listener') identicalTo: socket.
+	socket closeAndDestroy
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testShutDownBeforeQuittingClosesTheListener [
+	server instVarNamed: 'listener' put: Socket newTCP.
+	server shutDown: true.
+	self assert: (server instVarNamed: 'listener') isNil
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testStartUpOfASavedImageForgetsTheEarlierSession [
+	| process socket |
+	process := [ Semaphore new wait ] newProcess.
+	process resume.
+	socket := Socket newTCP.
+	server instVarNamed: 'running' put: true.
+	server instVarNamed: 'listener' put: socket.
+	server instVarNamed: 'acceptor' put: process.
+	server startUp: true.
+	self deny: (server instVarNamed: 'running').
+	self assert: (server instVarNamed: 'listener') isNil.
+	self assert: (server instVarNamed: 'acceptor') isNil.
+	socket closeAndDestroy.
+	process terminate
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testStartUpOfASavedImageDropsItsConnections [
+	| process |
+	process := [ Semaphore new wait ] newProcess.
+	process resume.
+	server connectionProcesses add: process.
+	server startUp: true.
+	self assert: server connectionProcesses isEmpty.
+	process terminate
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testStartUpWithAStoppedServerStartsNoAcceptor [
+	server instVarNamed: 'running' put: false.
+	server startUp: false.
+	self assert: (server instVarNamed: 'acceptor') isNil
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testStartUpAfterASaveRestartsTheAcceptorOnTheSameListener [
+	| socket |
+	socket := Socket newTCP listenOn: 0 backlogSize: 1 interface: #[ 127 0 0 1 ]; yourself.
+	server instVarNamed: 'running' put: true.
+	server instVarNamed: 'session' put: Smalltalk session.
+	server instVarNamed: 'listener' put: socket.
+	server startUp: false.
+	self assert: (server instVarNamed: 'acceptor') notNil.
+	self deny: (server instVarNamed: 'acceptor') isTerminated.
+	server shutDown: true
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testAcceptLoopEndsWhenTheListenerIsInvalid [
+	| socket |
+	socket := Socket newTCP.
+	socket closeAndDestroy.
+	server instVarNamed: 'running' put: true.
+	server instVarNamed: 'session' put: Smalltalk session.
+	server instVarNamed: 'listener' put: socket.
+	server instVarNamed: 'acceptor' put: Processor activeProcess.
+	server acceptLoop.
+	server instVarNamed: 'acceptor' put: nil
+]
+
+{ #category : 'session hooks' }
+StLiveServerTest >> testAcceptLoopEndsInAnotherSession [
+	| socket |
+	socket := Socket newTCP listenOn: 0 backlogSize: 1 interface: #[ 127 0 0 1 ]; yourself.
+	server instVarNamed: 'running' put: true.
+	server instVarNamed: 'session' put: Object new.
+	server instVarNamed: 'listener' put: socket.
+	server instVarNamed: 'acceptor' put: Processor activeProcess.
+	server acceptLoop.
+	server instVarNamed: 'acceptor' put: nil.
+	socket closeAndDestroy
+]

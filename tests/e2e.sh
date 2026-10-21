@@ -560,7 +560,40 @@ ST
 for i in $(seq 1 40); do [ -s "$WORK/dist/check.txt" ] && break; sleep 0.5; done
 out="{\"v\":\"$(cat "$WORK/dist/check.txt" 2>/dev/null)\"}"; check "exported image: server gone, application kept" '.v' "false,42"
 
-# --- 0.8.1: names that methods reference but nothing defines: a load lists them, a fresh run fails with load_failed
+# --- 0.8.0: a saved image starts again (acceptor not saved)
+# The acceptor is a process of the server. A saved image must not carry a live one: it would run first after the next
+# start, on a listener that is gone, and starve the startup (macOS: 100% CPU, no port file, eval hangs).
+ACCEPTORS="(Process allInstances select: [ :p | p name = 'stlive-acceptor' and: [ p isTerminated not ] ]) size"
+$S start >/dev/null
+out=$($S eval "$ACCEPTORS"); check "one acceptor after start" '.result.value.print' 1
+out=$($S image save); check "image save answers" '.ok'
+out=$($S eval "$ACCEPTORS"); check "running instance after save: still one acceptor" '.result.value.print' 1
+out=$($S ping); check "running instance after save answers" '.result.pong'
+$S stop --force >/dev/null; $S start >/dev/null
+out=$($S eval "$ACCEPTORS"); check "saved image started again: one acceptor" '.result.value.print' 1
+out=$($S ping); check "saved image started again answers ping" '.result.pong'
+for i in 1 2; do $S image save >/dev/null; $S stop --force >/dev/null; $S start >/dev/null; done
+out=$($S eval "$ACCEPTORS"); check "two more save and restart rounds: still one acceptor" '.result.value.print' 1
+out="{\"n\": $(grep -c 'stlive: port file written' .stlive/default.log)}"; check "instance log: port file written" '.n > 0' true
+# a copy of the saved image, started by the VM alone (no stlive involved): prints 2 and nothing else
+$S image save >/dev/null; $S stop --force >/dev/null
+IMG=$(jq -r .image .stlive/default.config.json)
+VM=$(jq -r .vm .stlive/default.config.json)
+mkdir -p "$WORK/copy"
+cp "$IMG" "$WORK/copy/saved.image"; cp "${IMG%.image}.changes" "$WORK/copy/saved.changes"; cp -L .stlive/*.sources "$WORK/copy/"
+got=$(timeout 60 "$VM" --headless "$WORK/copy/saved.image" eval "1+1" 2>/dev/null)
+out=$(jq -n --arg v "$got" '{v: $v}'); check "saved copy started by the VM evaluates 1+1" '.v' 2
+got=$(timeout 60 "$VM" --headless "$WORK/copy/saved.image" eval "$ACCEPTORS" 2>/dev/null)
+out=$(jq -n --arg v "$got" '{v: $v}'); check "saved copy started by the VM has no acceptor" '.v' 0
+# image export --keep-server: the delivered copy keeps the server code, not a running acceptor
+$S start >/dev/null
+out=$($S image export "$WORK/kept/Kept.image" --keep-server --force); check "export with keep-server writes the image" '.ok'
+got=$(timeout 60 "$VM" --headless "$WORK/kept/Kept.image" eval "1+1" 2>/dev/null)
+out=$(jq -n --arg v "$got" '{v: $v}'); check "exported image with keep-server evaluates 1+1" '.v' 2
+got=$(timeout 60 "$VM" --headless "$WORK/kept/Kept.image" eval "$ACCEPTORS" 2>/dev/null)
+out=$(jq -n --arg v "$got" '{v: $v}'); check "exported image with keep-server has no acceptor" '.v' 0
+
+# --- 0.8.0: names that methods reference but nothing defines: a load lists them, a fresh run fails with load_failed
 mkdir -p undeclsrc/BaselineOfE2EUndecl undeclsrc/E2EUndecl undeclsrc/BaselineOfE2EClean undeclsrc/E2EClean
 printf "Package { #name : 'BaselineOfE2EUndecl' }\n" > undeclsrc/BaselineOfE2EUndecl/package.st
 printf "Package { #name : 'E2EUndecl' }\n" > undeclsrc/E2EUndecl/package.st
@@ -580,7 +613,7 @@ check "fresh: an undeclared name fails with load_failed" '.error.code' load_fail
 check "fresh: the message names the undeclared name" '.error.message|contains("E2ENoSuchThingXyz")' true
 [ "$RC" -eq 6 ] && { pass=$((pass+1)); echo "ok   - fresh: undeclared name exits 6"; } || { fail=$((fail+1)); echo "FAIL - undeclared fresh exit code $RC"; }
 
-# --- 0.8.1: SIGINT / SIGTERM during a fresh run: the temporary instance is stopped and deleted, exit 130 / 143
+# --- 0.8.0: SIGINT / SIGTERM during a fresh run: the temporary instance is stopped and deleted, exit 130 / 143
 mkdir -p slowsrc/BaselineOfE2ESlow slowsrc/E2ESlow slowsrc/E2ESlow-Tests
 printf "Package { #name : 'BaselineOfE2ESlow' }\n" > slowsrc/BaselineOfE2ESlow/package.st
 printf "Package { #name : 'E2ESlow' }\n" > slowsrc/E2ESlow/package.st
@@ -600,7 +633,7 @@ for SIG in INT TERM; do
   grep -q "\"code\":\"interrupted\"" "$WORK/int-$SIG.out" && { pass=$((pass+1)); echo "ok   - SIG$SIG: the response says interrupted"; } || { fail=$((fail+1)); echo "FAIL - SIG$SIG response"; cat "$WORK/int-$SIG.out" | cut -c1-300; }
 done
 
-# --- 0.8.1: orphaned temporary instances. A kept run's instance is not an orphan while its image lives; an instance whose
+# --- 0.8.0: orphaned temporary instances. A kept run's instance is not an orphan while its image lives; an instance whose
 # image died or whose owner is gone without keeping it is one, and `instances --prune-temporary` removes it.
 out=$($S test run --fresh --keep --load E2ESlow --repository "tonel://$WORK/slowsrc"); ORPH=$(echo "$out" | jq -r .result.instance)
 check "fresh --keep of a failing slow test names its instance" '.result.kept' true

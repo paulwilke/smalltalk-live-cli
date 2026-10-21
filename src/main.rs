@@ -881,7 +881,10 @@ fn start_quiet(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui
     let _ = std::fs::write(&serve, init::serve_st());
     let src_dir = init::write_sources(&init::home_dir()).ok();
     let _ = std::fs::remove_file(inst.path("port.json"));
-    let log = std::fs::File::create(inst.path("log")).expect("cannot create log file");
+    // truncated for this start; the image's stdout and our own lines are appended to it (append mode for both)
+    let log_path = inst.path("log");
+    std::fs::File::create(&log_path).expect("cannot create log file");
+    let log = std::fs::OpenOptions::new().append(true).open(&log_path).expect("cannot open log file");
     let mut cmd = Command::new(&vm);
     cmd
         .args(if gui { vec![] } else { vec!["--headless"] })
@@ -898,22 +901,47 @@ fn start_quiet(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui
     ;
     platform::detach(&mut cmd);
     let child = cmd.spawn();
-    let child = match child {
+    let mut child = match child {
         Ok(c) => c,
         Err(e) => return Err((3, "spawn_failed", format!("Cannot start {}: {}", vm.display(), e))),
     };
     let _ = std::fs::write(inst.path("pid"), child.id().to_string());
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let wait_secs = 60;
+    let deadline = Instant::now() + Duration::from_secs(wait_secs);
     while Instant::now() < deadline {
         if let Some(info) = inst.port_info() {
-            return Ok(json!({"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": inst.path("log"), "sources": src_dir}));
+            return Ok(json!({"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": log_path, "sources": src_dir}));
         }
-        if !inst.alive() {
+        // the image quit (serve.st ends it when the server does not start): no point in waiting for the port file
+        if matches!(child.try_wait(), Ok(Some(_))) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err((3, "start_failed", format!("Image did not publish a port in time; see {}", inst.path("log").display())))
+    let pid = child.id();
+    let ended = matches!(child.try_wait(), Ok(Some(_)));
+    let (log_note, message) = if ended {
+        (format!("stlive: port file not written: the image ended (pid {})", pid), format!("The image ended before it published its port (pid {})", pid))
+    } else {
+        (format!("stlive: port file not written within {} s (pid {})", wait_secs, pid), format!("The image did not publish its port within {} s (pid {}; still running: `stlive stop --force` ends it)", wait_secs, pid))
+    };
+    log_line(&log_path, &log_note);
+    Err((3, "start_failed", format!("{}. Log: {}\nLast lines of the log:\n{}", message, log_path.display(), last_lines(&log_path, 15))))
+}
+
+/// The last `n` lines of a file (empty when it cannot be read).
+fn last_lines(path: &Path, n: usize) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// Appends one line to an instance log (the image writes to the same file in append mode).
+fn log_line(path: &Path, line: &str) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
+        let _ = writeln!(f, "{}", line);
+    }
 }
 
 fn stop(inst: &Instance, force: bool, pretty: bool) {
