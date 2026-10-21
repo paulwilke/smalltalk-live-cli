@@ -869,7 +869,7 @@ fn start_quiet(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui
             let _ = init::instance_image(&timg, &inst.dir, &inst.name);
         }
     }
-    let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let abs = |p: &Path| platform::absolute(p);
     let (vm, image) = (abs(&vm), abs(&image));
     let _ = std::fs::create_dir_all(&inst.dir);
     // The state directory (images, logs, Pharo's pharo-local/ombu-sessions) never belongs in version control.
@@ -1685,7 +1685,7 @@ fn run_program(inst: &Instance, load: Vec<PathBuf>, packages: Vec<String>, prepa
         Some(t) => t,
         None => die(2, "not_initialized", "Run `stlive init` once first.".into(), pretty),
     };
-    let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let abs = |p: &Path| platform::absolute(p);
     let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let dir = inst.dir.join(format!("run-{}-{}", std::process::id(), ms));
     let _ = std::fs::create_dir_all(&inst.dir);

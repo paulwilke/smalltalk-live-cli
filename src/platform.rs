@@ -9,6 +9,32 @@ pub fn home() -> PathBuf {
     PathBuf::from(std::env::var(var).unwrap_or_else(|_| ".".into()))
 }
 
+/// The absolute form of a path, as a program outside Rust can use it. `std::fs::canonicalize` answers an
+/// extended-length path on Windows (`\\?\C:\...`); the Pharo VM does not open those ("Image file not found"),
+/// so the prefix is taken off again. A path that cannot be canonicalized is answered as given.
+pub fn absolute(p: &Path) -> PathBuf {
+    match std::fs::canonicalize(p) {
+        Ok(c) => strip_extended_prefix(c),
+        Err(_) => p.to_path_buf(),
+    }
+}
+
+#[cfg(windows)]
+fn strip_extended_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", rest))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+#[cfg(not(windows))]
+fn strip_extended_prefix(p: PathBuf) -> PathBuf {
+    p
+}
+
 /// Is a process with this id alive?
 #[cfg(unix)]
 pub fn pid_alive(pid: i32) -> bool {

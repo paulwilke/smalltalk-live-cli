@@ -240,7 +240,10 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
         crate::platform::download_pharo(&pharo_dir)?;
     }
     let vm = match &local {
-        Some((lvm, _)) => std::fs::canonicalize(lvm).map_err(|e| format!("{}: {}", lvm.display(), e))?,
+        Some((lvm, _)) => {
+            std::fs::canonicalize(lvm).map_err(|e| format!("{}: {}", lvm.display(), e))?;
+            crate::platform::absolute(lvm)
+        }
         None => find_vm(&pharo_dir).ok_or("Pharo VM not found after download")?,
     };
 
