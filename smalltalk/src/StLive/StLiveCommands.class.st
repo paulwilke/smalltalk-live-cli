@@ -917,14 +917,18 @@ StLiveCommands >> cmdMethodCompile: args [
 
 { #category : 'code' }
 StLiveCommands >> compileMethod: args [
-	| cls source protocol old new selector entry |
+	"Pharo keeps method source with CR line endings, as the Tonel loader does, so the compiler gets the CR form:
+	a multi-line string literal then matches a method loaded from Tonel. The LF source stays the one recorded,
+	diffed and used for error positions (same length, so positions index it too)."
+	| cls source crSource protocol old new selector entry |
 	cls := self classNamed: (self need: 'class' in: args).
 	source := self lf: (self need: 'source' in: args) trimRight.
-	selector := [ (OpalCompiler new source: source; class: cls; parse) selector ]
+	crSource := source copyReplaceAll: String lf with: String cr.
+	selector := [ (OpalCompiler new source: crSource; class: cls; parse) selector ]
 		on: OCCodeError do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	old := cls compiledMethodAt: selector ifAbsent: [ nil ].
 	protocol := args at: 'protocol' ifAbsent: [ old ifNil: [ 'as yet unclassified' ] ifNotNil: [ :o | o protocol name ] ].
-	new := [ server suppressRecordingDuring: [ cls compile: source classified: protocol ] ]
+	new := [ server suppressRecordingDuring: [ cls compile: crSource classified: protocol ] ]
 		on: OCCodeError, OCUndeclaredVariableWarning
 		do: [ :e | ^ (self compileFailure: e source: source) signal ].
 	new isNil ifTrue: [ self fail: 'compile_error' message: 'Compilation failed' ].

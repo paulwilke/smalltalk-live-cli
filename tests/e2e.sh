@@ -126,6 +126,17 @@ out=$($S save --package Demo --dir src); check "save includes eval-made class co
 [ "$(sed -n 2p src/Demo/Evl.class.st)" = 'Commented by eval, with ""quotes"".' ] && { pass=$((pass+1)); echo "ok   - tonel has the eval-made class comment, quotes escaped"; } || { fail=$((fail+1)); echo "FAIL - eval-made class comment not in tonel"; head -4 src/Demo/Evl.class.st; }
 out=$($S eval '3 zork' --no-source); check "eval --no-source drops the statement" '.error.top.statement' null
 out=$($S method remove Cart total); check "method remove error names --force" '.error.message|contains("--force")'
+# multi-line string literals: compiled here they hold CR like a method loaded from Tonel; recorded, shown and saved with LF
+$S class create Banner --package Demo >/dev/null
+out=$($S method compile Banner --protocol t - <<< $'text\n\t^ \'first line\nsecond line\''); BIDX=$(echo "$out" | jq -r .result.change_index)
+out=$($S eval 'Banner new text includes: Character cr'); check "multi-line literal has CR like a Tonel-loaded method" '.result.value.print' true
+out=$($S eval 'Banner new text includes: Character lf'); check "multi-line literal has no LF" '.result.value.print' false
+out=$($S method show 'Banner>>text'); check "method show source has LF only" '[(.result.source|contains("\r")), (.result.source|contains("\n"))]|join(",")' 'false,true'
+out=$($S changes show "$BIDX"); check "recorded change has LF only" '[(.result.new_source|contains("\r")), (.result.new_source|contains("\n"))]|join(",")' 'false,true'
+out=$($S save --package Demo --dir src); check "save of the multi-line method" '.ok'
+grep -q "second line'" src/Demo/Banner.class.st && ! grep -q $'\r' src/Demo/Banner.class.st && { pass=$((pass+1)); echo "ok   - tonel has the multi-line method with LF line endings only"; } || { fail=$((fail+1)); echo "FAIL - tonel line endings"; od -c src/Demo/Banner.class.st | head -20; }
+out=$($S method compile Banner - <<< $'broken\n\t| s |\n\ts := NoSuchBannerThing new.\n\t^ \'first\nsecond\''); check "compile error in a multi-line method names the variable" '.error.variable' NoSuchBannerThing
+check "compile error in a multi-line method has line 3" '[.error.line,.error.column]|join(":")' '3:7'
 
 # --- attach the server to an image that is already running
 PORT=$(jq -r .port .stlive/default.port.json)
