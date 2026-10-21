@@ -16,7 +16,7 @@ stlive image info                             # version, loaded packages, unsave
 ```
 `--instance NAME` runs several images side by side. References (`obj-…`) and sessions (`dbg-…`) die with the image process (`stale_ref` after a restart). `STLIVE_HOME` is the template directory (VM, image), `STLIVE_DIR` the instance state; with only `STLIVE_DIR` set, it is both – a separate environment never touches `~/.stlive`.
 
-Re-running `load` after editing files updates the loaded packages: packages changed in the image are overwritten by the files (`modified_packages_overwritten`, their unsaved recorded changes are dropped as superseded – `save` first if you want to keep them) and a changed baseline is picked up (`baseline_package: reloaded`).
+Re-running `load` after editing files updates the loaded packages: packages changed in the image are overwritten by the files (`modified_packages_overwritten`, their unsaved recorded changes are dropped as superseded – `save` first if you want to keep them) and a changed baseline is picked up (`baseline_package: reloaded`). Nothing is unloaded on its own: a package the baseline dropped is listed in `stale_packages` (run `load … --prune` to unload it), packages outside the requested groups in `not_reloaded_packages` (load again with the named `--group`).
 
 ## The loop
 1. **Reproduce** with `eval` or `test run`. A failure is not a tool error: it becomes a **debug session** that keeps the stack alive.
@@ -80,7 +80,7 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead �
 - An unhandled error in a process your program forked does not end the headless image: it is logged in the instance log and listed by `image info` under `background_errors` (type, message, ten frames); only that process was terminated. Check it when something that runs in the background stops working.
 - Many red tests: the image keeps at most 60 debug sessions; `test run` keeps one per failure group and reports the rest as `sessions_ended`. Use `--keep-sessions` only for small runs.
 - Semaphore timeouts: `waitTimeoutSeconds:` and `waitTimeoutMilliseconds:` (`waitTimeoutMSecs:` is the deprecated alias) answer `true` when the wait TIMED OUT and `false` when the semaphore was signalled – the opposite of what many expect. Check it accordingly: `(sem waitTimeoutSeconds: 5) ifTrue: [ ^ self error: 'timeout' ]`.
-- Line endings in string literals: a method loaded from Tonel files gets CR line endings in its source (Pharo's internal convention), so a multi-line literal arrives in the image with CR, not LF. When the string must contain LF (HTTP, JSON, files for other tools), build it explicitly: `String lf join: #(...)` or `aString withUnixLineEndings`.
+- Line endings in string literals: a method loaded from Tonel files gets CR line endings in its source (Pharo's internal convention), so a multi-line literal arrives in the image with CR, not LF (`method compile` does the same since 0.7.1). When the string must contain LF (HTTP, JSON, files for other tools), build it explicitly: `String lf join: #(...)` or `aString withUnixLineEndings`.
 
 ## Report
 State the cause, the minimal diff, which tests ran (counts), and what you could not verify.

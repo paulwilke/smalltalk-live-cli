@@ -157,7 +157,7 @@ The delivered image contains your application but no stlive classes and no evalu
 
 ## Status and what is still open
 
-**Works and is tested** (102 headless + 19 GUI end-to-end checks and 9 Rust unit tests on macOS arm64, Pharo 13): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
+**Works and is tested** (127 headless + 19 GUI end-to-end checks and 17 Rust unit tests on macOS arm64, Pharo 13; the headless checks also on Linux x86-64): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
 
 **Open / not yet verified:**
 - Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
@@ -175,7 +175,7 @@ Short version: this is a CLI because a shell is the one integration point every 
 - The server listens on `127.0.0.1` only, on an ephemeral port published in the instance's state directory. There is **no authentication**: anyone who can connect to that local port can execute arbitrary Smalltalk in the image. Treat it like a local dev REPL, not a service.
 - Destructive operations (`stop`, `method remove`) need `--force`. Output is bounded everywhere; endless loops become sessions after `--timeout` instead of hanging.
 - References and sessions carry the image's run id, so they are rejected as `stale_ref` after a restart rather than silently pointing at something else.
-- `load` lets the files win: a package that was modified in the image (methods compiled through stlive) is overwritten by a re-load and its unsaved recorded changes are marked superseded, so a later `save` cannot resurrect them. Save first if you want to keep such changes.
+- `load` lets the files win: a package that was modified in the image (methods compiled through stlive) is overwritten by a re-load and its unsaved recorded changes are marked superseded, so a later `save` cannot resurrect them. Save first if you want to keep such changes. A package the baseline no longer lists stays in the image and is reported as `stale_packages`; `load --prune` unloads it (not when it has unsaved changes). Packages of groups that were not requested are reported as `not_reloaded_packages`.
 
 ## Limitations
 
@@ -184,7 +184,7 @@ Short version: this is a CLI because a shell is the one integration point every 
 - Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).
 - No single-stepping (`step into/over`) yet; sessions can be restarted per frame, resumed, or have a frame return a value.
-- `save` knows classes, traits, instance/class-side methods, extensions and removals of methods, and updates the variable lists (`#instVars`, `#classVars`, `#classInstVars`) of an existing definition while keeping its other lines (`#traits`, `#classTraits`, `#category`); it does not rewrite a changed superclass, trait composition or comment of an existing class.
+- `save` knows classes, traits, instance/class-side methods, extensions and removals of methods, and updates the variable lists (`#instVars`, `#classVars`, `#classInstVars`) of an existing definition while keeping its other lines (`#traits`, `#classTraits`, `#category`); it writes a changed class comment back, but does not rewrite a changed superclass or trait composition of an existing class.
 - A headless image no longer quits on an unhandled error in a process that is not an stlive job (a forked process of your application): the error is logged (instance log, `image info` → `background_errors`) and only that process ends. In GUI mode Pharo's debugger opens as usual.
 - Endless recursion is reported as a repeating pattern of the top frames; the starting call is deep below the 100 000-frame inspection cap.
 

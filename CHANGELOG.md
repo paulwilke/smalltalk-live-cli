@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 (not released yet) – feedback from the Orbit rebuild
+- **`save` writes a changed class comment** of an existing class back to its Tonel file (replaced, added or removed); comment changes made through `eval` (`Foo comment: '…'`) are recorded.
+- **`method compile` compiles with CR line endings**, like the Tonel loader: a multi-line string literal now holds the same characters whether the method was compiled through stlive or loaded from files. Recorded source, diffs, `method show` and error positions stay LF.
+- **Fix: a method whose body starts on its header line** (`Foo >> baseline: spec [ <baseline>`) was read with a wrong selector (`baseline:[`): `drift` reported drift without any change and `save` appended a duplicate instead of replacing it.
+- **`load` reports what it does not touch**: `stale_packages` (loaded packages the baseline no longer lists), `not_reloaded_packages` (loaded packages outside the requested groups, with a `--group` hint). `load --prune` unloads the stale ones; packages with unsaved changes or listed by another loaded baseline stay (`prune_skipped`). `drift --all` reports packages a baseline in `--dir` lists that are loaded but have no folder (`packages_missing_in_files`).
+- Skill: `Semaphore>>waitTimeoutSeconds:` answers `true` on timeout; string literals loaded from Tonel hold CR.
+- 127 e2e checks, 17 Rust unit tests.
+
 ## 0.7.0 – gaps found while rebuilding a multi-module system with stlive
 - **`STLIVE_DIR` is the home when `STLIVE_HOME` is unset.** An environment that only sets the state directory no longer clones from, or `init`s into, `~/.stlive` by accident; it gets `not_initialized` until `stlive init` runs there.
 - **Traits** in `save` and `drift`: trait definitions (`Name.trait.st`), trait methods on both sides (`TFoo classSide >> sel`), classes using traits (`#traits`/`#classTraits` are written and kept when a definition is patched). A method a class gets from a trait is no longer reported as drift (`package.methods` lists local methods only). `class create --trait`, `class create --traits 'TFoo + TBar'`; `class show` reports `kind` and `traits`.
