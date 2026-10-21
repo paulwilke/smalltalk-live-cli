@@ -342,6 +342,87 @@ out=$($S drift --all --dir pdrift); check "drift --all reports a loaded package 
 check "the missing folder is attributed to its baseline" '.result.packages_missing_in_files[0].listed_by|join(",")' BaselineOfPrune
 $S drift --all --dir pdrift >/dev/null; [ $? -eq 1 ] && { pass=$((pass+1)); echo "ok   - drift --all exits 1 for a missing folder"; } || { fail=$((fail+1)); echo "FAIL - drift --all missing folder exit code"; }
 
+# --- 0.7.1: stale records survive a restart, one-line methods
+# `stop` discards unsaved state, loaded packages included: the restart is checked after `image save`
+mkdir -p rsrc/BaselineOfRestart rsrc/RestartA rsrc/RestartB lfsrc
+for p in BaselineOfRestart RestartA RestartB; do printf "Package { #name : '%s' }\n" $p > rsrc/$p/package.st; done
+cat > rsrc/BaselineOfRestart/BaselineOfRestart.class.st <<'ST'
+Class {
+	#name : 'BaselineOfRestart',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfRestart'
+}
+
+{ #category : 'baselines' }
+BaselineOfRestart >> baseline: spec [
+	<baseline>
+	spec for: #common do: [
+		spec package: 'RestartA'.
+		spec package: 'RestartB' ]
+]
+ST
+cat > rsrc/RestartA/RestartAThing.class.st <<'ST'
+Class {
+	#name : 'RestartAThing',
+	#superclass : 'Object',
+	#package : 'RestartA'
+}
+
+{ #category : 'x' }
+RestartAThing >> one [ ^ 1 ]
+
+{ #category : 'x' }
+RestartAThing >> add: x [ ^ x + 1 ]
+ST
+cat > rsrc/RestartB/RestartBThing.class.st <<'ST'
+Class {
+	#name : 'RestartBThing',
+	#superclass : 'Object',
+	#package : 'RestartB'
+}
+
+{ #category : 'x' }
+RestartBThing >> answer [
+	^ 2
+]
+ST
+out=$($S load Restart --repository "tonel://$WORK/rsrc"); check "one-line methods: baseline with packages A and B loads" '.result.loaded.new_package_count' 3
+out=$($S drift --package RestartA --dir rsrc); check "drift is clean for loaded one-line methods" '.result.drift' false
+# B leaves the baseline: stale in the load that drops it, and still stale after an image save and a restart
+cat > rsrc/BaselineOfRestart/BaselineOfRestart.class.st <<'ST'
+Class {
+	#name : 'BaselineOfRestart',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfRestart'
+}
+
+{ #category : 'baselines' }
+BaselineOfRestart >> baseline: spec [
+	<baseline>
+	spec for: #common do: [
+		spec package: 'RestartA' ]
+]
+ST
+out=$($S load Restart --repository "tonel://$WORK/rsrc"); check "a package the baseline dropped is stale" '.result.loaded.stale_packages|join(",")' RestartB
+$S image save >/dev/null; $S stop --force >/dev/null; $S start >/dev/null
+out=$($S load Restart --repository "tonel://$WORK/rsrc"); check "stale record survives an image save and a restart" '.result.loaded.stale_packages|join(",")' RestartB
+out=$($S load Restart --repository "tonel://$WORK/rsrc" --prune); check "--prune after the restart unloads the stale package" '.result.loaded.pruned_packages|join(",")' RestartB
+# a one-line method changed in the image is saved in place; the other one-line method stays as it was
+$S method compile RestartAThing --protocol x - <<< $'one\n\t^ 5' >/dev/null
+out=$($S save --package RestartA --dir rsrc); check "save of a changed one-line method" '.ok'
+grep -qxF $'\t^ 5' rsrc/RestartA/RestartAThing.class.st && grep -qF 'RestartAThing >> add: x [ ^ x + 1 ]' rsrc/RestartA/RestartAThing.class.st && ! grep -qF 'one [ ^ 1 ]' rsrc/RestartA/RestartAThing.class.st && { pass=$((pass+1)); echo "ok   - tonel has the one-line method saved in place, the other one-liner untouched"; } || { fail=$((fail+1)); echo "FAIL - one-line method saved in place"; cat rsrc/RestartA/RestartAThing.class.st; }
+out=$($S drift --package RestartA --dir rsrc); check "drift is clean after saving the one-line method" '.result.drift' false
+# eval-made method with a multi-line literal: recorded, saved and drift-checked with LF only
+$S class create LfThing --package LfDemo >/dev/null
+$S eval - <<< $'LfThing compile: \'lfText\n\t^ \'\'x\ny\'\'\' classified: \'x\'. 1' >/dev/null
+out=$($S changes list); TOTAL=$(echo "$out" | jq -r .result.total)
+out=$($S changes show "$TOTAL"); check "eval-made multi-line method is the last change, origin eval" '[.result.origin,.result.selector]|join(",")' 'eval,lfText'
+check "eval-made change records LF only" '[(.result.new_source|contains("\r")), (.result.new_source|contains("\n"))]|join(",")' 'false,true'
+out=$($S save --package LfDemo --dir lfsrc); check "save of the eval-made multi-line method" '.ok'
+grep -qxF "y'" lfsrc/LfDemo/LfThing.class.st && ! grep -q $'\r' lfsrc/LfDemo/LfThing.class.st && { pass=$((pass+1)); echo "ok   - tonel has the eval-made method with LF line endings only"; } || { fail=$((fail+1)); echo "FAIL - eval-made method line endings"; od -c lfsrc/LfDemo/LfThing.class.st | head -20; }
+out=$($S drift --package LfDemo --dir lfsrc); check "drift is clean for the eval-made multi-line method" '.result.drift' false
+out=$($S eval 'LfThing new lfText includes: Character lf'); check "the live literal keeps the LF typed in eval" '.result.value.print' true
+
 # --- 0.7: an unhandled error in a forked process no longer ends the headless image
 out=$($S eval '[ 1 / 0 ] fork. (Delay forMilliseconds: 300) wait. 7'); check "forked error: eval still answers" '.result.value.print' 7
 out=$($S ping); check "image survives the forked error" '.result.pong'

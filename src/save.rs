@@ -498,15 +498,25 @@ pub fn parse_methods(text: &str) -> Vec<FileMethod> {
     for b in method_blocks(text) {
         let block = &text[b.start..b.end];
         let lines: Vec<&str> = block.lines().collect();
-        if lines.len() < 3 { continue; }
-        let h = match parse_header(lines[1]) {
+        if lines.len() < 2 { continue; }
+        let mut h = match parse_header(lines[1]) {
             Some(h) => h,
             None => continue,
         };
         // body: everything after the header line up to the closing "]" line
         let mut body: Vec<&str> = lines[2..].to_vec();
         while body.last().map(|l| l.trim().is_empty()).unwrap_or(false) { body.pop(); }
-        if body.last().map(|l| l.trim() == "]").unwrap_or(false) { body.pop(); }
+        if body.is_empty() {
+            // a method on one line, `Foo >> pattern [ body ]`: its closing bracket is the LAST `]` of the header line.
+            // The line is complete only when nothing follows it (the next block or the end of the file), so a
+            // header line that ends in `]` with body lines below it keeps that `]`.
+            match h.tail.strip_suffix(']') {
+                Some(t) => h.tail = t.trim_end(),
+                None => continue,
+            }
+        } else if body.last().map(|l| l.trim() == "]").unwrap_or(false) {
+            body.pop();
+        }
         out.push(FileMethod { class_header: b.class_header.clone(), selector: b.selector.clone(), source: normalise(&method_source(&h, &body)) });
     }
     out
@@ -765,6 +775,76 @@ mod tests {
         let text = fs::read_to_string(dir.join("Pkg/DemoA.class.st")).unwrap();
         assert_eq!(text, "{ #category : 'x' }\nDemoA >> add: x [\n\t^ x + 2\n]\n\n{ #category : 'baselines' }\nDemoA >> baseline: spec [\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Other' ]\n]\n");
         assert_eq!(text.matches(" >> baseline:").count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Methods written entirely on one line: `Foo >> pattern [ body ]`, the closing bracket being the last `]` of it.
+    /// Unary, keyword, binary, and bodies with brackets of their own (`[ :e | e ] ]`, `[ 3 ] value`).
+    const ONE_LINE_FILE: &str = "{ #category : 'x' }\nDemoB >> one [ ^ 1 ]\n\n{ #category : 'x' }\nDemoB >> add: x [ ^ x + 1 ]\n\n{ #category : 'x' }\nDemoB >> + other [ ^ other ]\n\n{ #category : 'x' }\nDemoB >> nested [ ^ #(1 2) collect: [ :e | e ] ]\n\n{ #category : 'x' }\nDemoB >> three [ ^ [ 3 ] value ]\n";
+
+    #[test]
+    fn one_line_methods_parse_like_the_image_canonical_source() {
+        let ms = parse_methods(ONE_LINE_FILE);
+        let got: Vec<(&str, &str)> = ms.iter().map(|m| (m.selector.as_str(), m.source.as_str())).collect();
+        assert_eq!(got, vec![
+            ("one", "one\n\t^ 1"),
+            ("add:", "add: x\n\t^ x + 1"),
+            ("+", "+ other\n\t^ other"),
+            ("nested", "nested\n\t^ #(1 2) collect: [ :e | e ]"),
+            ("three", "three\n\t^ [ 3 ] value"),
+        ]);
+        // the header line ends in `]` but body lines follow it: that `]` belongs to the body, the method closes below
+        let open = "{ #category : 'x' }\nDemoB >> x [ ^ #(1 2) collect: [ :e | e ]\n\t+ 1\n]\n";
+        assert_eq!(parse_methods(open)[0].source, "x\n\t^ #(1 2) collect: [ :e | e ]\n\t+ 1");
+        // a blank line between the one-liner and the next block changes nothing
+        let spaced = "{ #category : 'x' }\nDemoB >> one [ ^ 1 ]\n\n\n{ #category : 'x' }\nDemoB >> two [ ^ 2 ]\n";
+        assert_eq!(parse_methods(spaced).iter().map(|m| m.source.clone()).collect::<Vec<_>>(), vec!["one\n\t^ 1", "two\n\t^ 2"]);
+    }
+
+    #[test]
+    fn drift_is_clean_for_one_line_methods() {
+        let dir = tmp("one-line-drift");
+        fs::write(dir.join("Pkg/DemoB.class.st"), format!("Class {{\n\t#name : 'DemoB',\n\t#superclass : 'Object',\n\t#package : 'Pkg'\n}}\n\n{}", ONE_LINE_FILE)).unwrap();
+        // the image's normalizedSourceOf: for the same methods
+        let image = json!({"classes": ["DemoB"], "methods": [
+            {"class": "DemoB", "side": "instance", "selector": "one", "source": "one\n\t^ 1"},
+            {"class": "DemoB", "side": "instance", "selector": "add:", "source": "add: x\n\t^ x + 1"},
+            {"class": "DemoB", "side": "instance", "selector": "+", "source": "+ other\n\t^ other"},
+            {"class": "DemoB", "side": "instance", "selector": "nested", "source": "nested\n\t^ #(1 2) collect: [ :e | e ]"},
+            {"class": "DemoB", "side": "instance", "selector": "three", "source": "three\n\t^ [ 3 ] value"}]});
+        let r = drift(&image, "Pkg", &dir);
+        assert_eq!(r["ok"], json!(true), "{}", r);
+        assert_eq!(r["methods_in_files"], json!(5));
+        // a changed one-liner is real drift
+        let mut changed = image.clone();
+        changed["methods"][0]["source"] = json!("one\n\t^ 2");
+        assert_eq!(drift(&changed, "Pkg", &dir)["different"], json!(["DemoB>>one"]));
+        // a one-liner the files lack is reported as missing in files
+        fs::write(dir.join("Pkg/DemoB.class.st"), format!("Class {{\n\t#name : 'DemoB',\n\t#superclass : 'Object',\n\t#package : 'Pkg'\n}}\n\n{}", ONE_LINE_FILE.replace("DemoB >> one [ ^ 1 ]\n", ""))).unwrap();
+        assert_eq!(drift(&image, "Pkg", &dir)["missing_in_files"], json!(["DemoB>>one"]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saving_replaces_one_line_methods_in_place() {
+        let dir = tmp("one-line-save");
+        fs::write(dir.join("Pkg/DemoB.class.st"), ONE_LINE_FILE).unwrap();
+        let changes = vec![
+            json!({"index": 1, "kind": "method-compile", "class_name": "DemoB", "class_package": "Pkg", "package": "Pkg", "side": "instance", "selector": "one", "protocol": "x", "new_source": "one\n\t^ 2"}),
+            json!({"index": 2, "kind": "method-remove", "class_name": "DemoB", "class_package": "Pkg", "package": "Pkg", "side": "instance", "selector": "nested"}),
+        ];
+        let p = plan(&changes, "Pkg", &dir, false).unwrap();
+        assert_eq!(p.report[0]["replaced"], json!(["DemoB>>one"]));
+        assert_eq!(p.report[0]["removed"], json!(["DemoB>>nested"]));
+        let text = fs::read_to_string(dir.join("Pkg/DemoB.class.st")).unwrap();
+        assert_eq!(text, "{ #category : 'x' }\nDemoB >> one [\n\t^ 2\n]\n\n{ #category : 'x' }\nDemoB >> add: x [ ^ x + 1 ]\n\n{ #category : 'x' }\nDemoB >> + other [ ^ other ]\n\n{ #category : 'x' }\nDemoB >> three [ ^ [ 3 ] value ]\n");
+        // the other one-liners are untouched and still drift-free against the image
+        let image = json!({"classes": ["DemoB"], "methods": [
+            {"class": "DemoB", "side": "instance", "selector": "one", "source": "one\n\t^ 2"},
+            {"class": "DemoB", "side": "instance", "selector": "add:", "source": "add: x\n\t^ x + 1"},
+            {"class": "DemoB", "side": "instance", "selector": "+", "source": "+ other\n\t^ other"},
+            {"class": "DemoB", "side": "instance", "selector": "three", "source": "three\n\t^ [ 3 ] value"}]});
+        assert_eq!(drift(&image, "Pkg", &dir)["ok"], json!(true));
         let _ = fs::remove_dir_all(&dir);
     }
 }
