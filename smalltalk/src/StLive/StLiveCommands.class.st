@@ -495,6 +495,29 @@ StLiveCommands >> notReloadedPackagesOf: current requested: requested membership
 ]
 
 { #category : 'baselines' }
+StLiveCommands >> undeclaredReferencesIn: packageNames [
+	"Names that methods of these packages reference while nothing defines them. Pharo registers such a name in
+	Undeclared and fails only when the code runs (UndeclaredVariableRead), so a load reports nothing by itself.
+	Answers one dictionary per name, sorted by name: 'name', 'methods' (Class>>selector of the referencing methods,
+	at most 10) and 'method_count'. Packages that do not exist are skipped."
+	| found |
+	found := Dictionary new.
+	packageNames do: [ :packageName |
+		(PackageOrganizer default packageNamed: packageName ifAbsent: [ nil ]) ifNotNil: [ :pk |
+			pk methods do: [ :m |
+				(m literals select: [ :l | l isVariableBinding and: [ Undeclared includesKey: l key ] ]) asSet do: [ :l |
+					(found at: l key ifAbsentPut: [ OrderedCollection new ])
+						add: m methodClass name asString , '>>' , m selector asString ] ] ] ].
+	^ (found keys asSortedCollection: [ :a :b | a asString < b asString ]) asArray collect: [ :name |
+		| methods |
+		methods := found at: name.
+		self m: {
+			'name' -> name asString.
+			'methods' -> (methods first: (10 min: methods size)) asArray.
+			'method_count' -> methods size } ]
+]
+
+{ #category : 'baselines' }
 StLiveCommands >> packagesListedByOtherBaselinesThan: name [
 	| names own |
 	names := Set new.
@@ -542,7 +565,8 @@ StLiveCommands >> cmdLoadBaseline: args [
 	updates packages that are already in the image, including ones with unsaved changes made in the image
 	(Monticello's merge-or-load question is answered with `load`: the files win) and the baseline itself.
 	Packages that left the baseline are reported as stale (and unloaded with prune: true); loaded packages of
-	the baseline that the requested groups do not contain are reported as not reloaded."
+	the baseline that the requested groups do not contain are reported as not reloaded. Names that methods of the
+	loaded packages reference but nothing defines are reported as undeclared (Pharo only fails when such code runs)."
 	| name repository groups before timeout holder response warnings overwritten prune known |
 	warnings := Bag new.
 	overwritten := Set new.
@@ -555,7 +579,7 @@ StLiveCommands >> cmdLoadBaseline: args [
 	before := (PackageOrganizer default packages collect: [ :p | p name ]) asSet.
 	response := self
 		runBlock: [
-			| loader added refreshed superseded version current memberships requested stale notReloaded pruned |
+			| loader added refreshed superseded version current memberships requested stale notReloaded pruned touched undeclared |
 			loader := Metacello new baseline: name; repository: repository; yourself.
 			[ server suppressRecordingDuring: [
 				[ refreshed := self refreshBaselinePackage: name repository: repository.
@@ -572,6 +596,8 @@ StLiveCommands >> cmdLoadBaseline: args [
 			current := self packageNamesOfVersion: version.
 			memberships := self groupMembershipsOf: version.
 			requested := self packagesLoadedForGroups: groups version: version.
+			touched := (requested asSet addAll: added; yourself) asArray.
+			undeclared := self undeclaredReferencesIn: touched.
 			stale := self stalePackagesOf: known current: current.
 			notReloaded := self notReloadedPackagesOf: current requested: requested memberships: memberships.
 			pruned := prune
@@ -589,6 +615,8 @@ StLiveCommands >> cmdLoadBaseline: args [
 				'changes_superseded' -> superseded.
 				'stale_packages' -> stale.
 				'not_reloaded_packages' -> notReloaded.
+				'undeclared' -> (undeclared first: (50 min: undeclared size)).
+				'undeclared_count' -> undeclared size.
 				'pruned_packages' -> pruned first.
 				'prune_skipped' -> pruned second.
 				'warnings' -> (warnings asSet asArray collect: [ :w | self m: { 'message' -> w. 'count' -> (warnings occurrencesOf: w) } ]) }.

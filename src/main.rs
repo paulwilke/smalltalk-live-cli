@@ -5,7 +5,8 @@
 //!
 //! Exit codes: 0 ok · 1 command failed / exception in image / failing tests · 2 usage
 //!             3 image not running or unreachable · 4 protocol error · 5 timeout
-//!             6 `test run --fresh`: the baseline did not load cleanly (error or warnings)
+//!             6 `test run --fresh`: the baseline did not load cleanly (error, warnings or undeclared names)
+//!             130 / 143 `test run --fresh` interrupted by SIGINT / SIGTERM (the temporary instance is stopped)
 
 mod init;
 mod platform;
@@ -71,8 +72,13 @@ enum Cmd {
         #[arg(long)]
         pid: Option<i32>,
     },
-    /// List instances known in the state directory
-    Instances,
+    /// List instances known in the state directory. Temporary ones (from `test run --fresh`) are marked, and so are
+    /// the orphaned ones: their run is gone, or their image died.
+    Instances {
+        /// Stop and delete the orphaned temporary instances
+        #[arg(long)]
+        prune_temporary: bool,
+    },
     /// Start the image headless in the background
     Start {
         /// Pharo VM executable (remembered per instance)
@@ -790,7 +796,7 @@ fn parse_kv(items: &[String]) -> Value {
 
 // ---------------------------------------------------------------- start / stop
 
-fn list_instances(inst: &Instance, pretty: bool) {
+fn list_instances(inst: &Instance, prune_temporary: bool, pretty: bool) {
     let mut names: Vec<String> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&inst.dir) {
         for e in rd.flatten() {
@@ -800,15 +806,28 @@ fn list_instances(inst: &Instance, pretty: bool) {
         }
     }
     names.sort();
-    let list: Vec<Value> = names
-        .iter()
-        .map(|n| {
-            let i = Instance { dir: inst.dir.clone(), name: n.clone() };
-            let info = i.port_info();
-            json!({"name": n, "running": i.alive() && info.is_some(), "port": info.as_ref().map(|x| x["port"].clone()), "pid": i.pid()})
-        })
-        .collect();
-    emit(&json!({"ok": true, "result": {"state_dir": inst.dir, "instances": list}}), pretty);
+    let mut pruned: Vec<String> = Vec::new();
+    let mut list: Vec<Value> = Vec::new();
+    for n in &names {
+        let i = Instance { dir: inst.dir.clone(), name: n.clone() };
+        let info = i.port_info();
+        let temporary = testrun::is_temporary(&i);
+        let orphaned = temporary && testrun::is_orphaned(&i);
+        list.push(json!({
+            "name": n,
+            "running": i.alive() && info.is_some(),
+            "port": info.as_ref().map(|x| x["port"].clone()),
+            "pid": i.pid(),
+            "temporary": temporary,
+            "orphaned": orphaned,
+        }));
+        if orphaned && prune_temporary {
+            stop_quiet(&i);
+            testrun::remove_files(&i);
+            pruned.push(n.clone());
+        }
+    }
+    emit(&json!({"ok": true, "result": {"state_dir": inst.dir, "instances": list, "pruned": pruned}}), pretty);
 }
 
 fn start(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui: bool, pretty: bool) {
@@ -887,7 +906,7 @@ fn start_quiet(inst: &Instance, vm: Option<PathBuf>, image: Option<PathBuf>, gui
     let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         if let Some(info) = inst.port_info() {
-            return Ok(json!({"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": inst.path("log")}));
+            return Ok(json!({"started": true, "pid": child.id(), "port": info["port"], "epoch": info["epoch"], "pharo": info["pharo"], "log": inst.path("log"), "sources": src_dir}));
         }
         if !inst.alive() {
             break;
@@ -973,7 +992,7 @@ fn attach(inst: &Instance, old_port: u16, pid: Option<i32>, pretty: bool) {
     let _ = std::fs::create_dir_all(&inst.dir);
     let list = packages.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(" ");
     let code = format!(
-        "Metacello new baseline: 'StLive'; repository: 'tonel://{src}'; load.\n\
+        "Metacello new baseline: 'StLive'; repository: 'tonel://{src}'; onConflictUseIncoming; load.\n\
          (Smalltalk globals at: #StLiveServer) recordSystemPackagesFrom: #({list}).\n\
          (Smalltalk globals at: #StLiveServer) installedHash: '{hash}'.\n\
          (Smalltalk globals at: #StLiveServer) current startPortFile: '{pf}'.",
@@ -1070,7 +1089,7 @@ fn main() {
                 Err(e) => die(1, "init_failed", e, pretty),
             }
         }
-        Cmd::Instances => return list_instances(&inst, pretty),
+        Cmd::Instances { prune_temporary } => return list_instances(&inst, prune_temporary, pretty),
         Cmd::Start { vm, image, gui } => return start(&inst, vm, image, gui, pretty),
         Cmd::Stop { force } => return stop(&inst, force, pretty),
         Cmd::Status => ("status".into(), json!({}), None),

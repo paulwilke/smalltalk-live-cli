@@ -8,9 +8,16 @@
 //! `stlive start` makes), the baseline is loaded (`load.baseline`), the tests run, and the instance is stopped and
 //! its files deleted. `--keep` leaves it running; its name is in the output.
 
-use crate::{call, emit_inner, exit_code_for, log_response, opt, start_quiet, stop_quiet, try_call, Instance};
+use crate::{call, emit_inner, exit_code_for, log_response, opt, platform, start_quiet, stop_quiet, try_call, Instance};
 use serde_json::{json, Map, Value};
+use signal_hook::consts::{SIGINT, SIGTERM};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Held by whichever thread finishes the process (a completed run, or an interrupt): the cleanup and the exit happen
+/// under it, so the other thread waits until the process ends instead of cleaning up or printing a second time.
+static FINISHING: Mutex<()> = Mutex::new(());
 
 /// Options of a test run, as the command line gives them.
 pub struct TestOpts {
@@ -214,12 +221,26 @@ pub fn default_targets(added: &[String]) -> Vec<String> {
     added.iter().filter(|p| p.ends_with("-Tests")).cloned().collect()
 }
 
-/// Why a baseline load did not come out clean: it failed, or it reported warnings (an undeclared variable is a
-/// warning in Pharo). `None` when it is clean.
+/// Why a baseline load did not come out clean: it failed, or left names undeclared (code references a global that
+/// nothing defines), or reported warnings. `None` when it is clean.
 pub fn load_problem(baseline: &str, resp: &Value) -> Option<String> {
     if resp["ok"] != json!(true) {
         let message = resp["error"]["message"].as_str().unwrap_or("unknown error");
         return Some(format!("Loading {} failed: {}", baseline, message));
+    }
+    let undeclared: Vec<Value> = resp["result"]["loaded"]["undeclared"].as_array().cloned().unwrap_or_default();
+    if !undeclared.is_empty() {
+        let count = resp["result"]["loaded"]["undeclared_count"].as_u64().unwrap_or(undeclared.len() as u64);
+        let names: Vec<&str> = undeclared.iter().take(5).filter_map(|u| u["name"].as_str()).collect();
+        let first = &undeclared[0];
+        return Some(format!(
+            "Loading {} left {} undeclared name(s): {}{} (first used by {})",
+            baseline,
+            count,
+            names.join(", "),
+            if count > names.len() as u64 { ", ..." } else { "" },
+            first["methods"][0].as_str().unwrap_or("?")
+        ));
     }
     let warnings: Vec<Value> = resp["result"]["loaded"]["warnings"].as_array().cloned().unwrap_or_default();
     match warnings.first() {
@@ -289,13 +310,65 @@ pub fn test_run(inst: &Instance, targets: Vec<String>, opts: TestOpts, pretty: b
     exit_with(&resp, code, pretty)
 }
 
-/// Stop and clean up (unless kept), then print the response and exit with `code`.
+/// Stop and clean up (unless kept), then print the response and exit with `code`. Also the path of an interrupt
+/// (see `watch_interrupts`), which stops the instance even when the run was to keep it.
 fn end(inst: &Instance, keep: bool, code: i32, resp: &Value, pretty: bool) -> ! {
-    if !keep {
+    let _finishing = FINISHING.lock().unwrap_or_else(|e| e.into_inner());
+    if keep {
+        mark(inst, "kept", json!(true));
+    } else {
         stop_quiet(inst);
         remove_files(inst);
     }
     exit_with(resp, code, pretty)
+}
+
+/// SIGINT and SIGTERM during a fresh run: the instance is stopped and its files deleted by the same path as a finished
+/// run, and the process exits with 130 (SIGINT) or 143 (SIGTERM). Installed for the whole fresh run, from before the
+/// instance starts. A watcher thread polls the signal flags, because the main thread may be blocked in a socket read.
+fn watch_interrupts(inst: &Instance, pretty: bool) -> Result<(), String> {
+    let int = Arc::new(AtomicBool::new(false));
+    let term = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGINT, Arc::clone(&int)).map_err(|e| e.to_string())?;
+    signal_hook::flag::register(SIGTERM, Arc::clone(&term)).map_err(|e| e.to_string())?;
+    let (dir, name) = (inst.dir.clone(), inst.name.clone());
+    std::thread::spawn(move || loop {
+        let (code, signal) = if int.load(Ordering::SeqCst) {
+            (130, "SIGINT")
+        } else if term.load(Ordering::SeqCst) {
+            (143, "SIGTERM")
+        } else {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        let inst = Instance { dir: dir.clone(), name: name.clone() };
+        let mut f = Fail::new(
+            code,
+            "interrupted",
+            format!("Interrupted by {}: the temporary instance {} was stopped and its files deleted", signal, inst.name),
+        );
+        f.extra.insert("signal".into(), json!(signal));
+        end(&inst, false, code, &fail_response(&f), pretty);
+    });
+    Ok(())
+}
+
+/// The stlive process that started a temporary instance, from its name `fresh-<pid>-<ms>`.
+pub fn owner_pid(name: &str) -> Option<i32> {
+    name.strip_prefix("fresh-")?.split('-').next()?.parse().ok()
+}
+
+/// A temporary instance nobody can use any more: its image is dead, or its owner run is gone and the run did not keep
+/// the instance (`--keep` marks it kept once the run completes; a kept instance lives until it is stopped).
+pub fn orphaned(temporary: bool, kept: bool, instance_alive: bool, owner_alive: bool) -> bool {
+    temporary && (!instance_alive || (!kept && !owner_alive))
+}
+
+/// `orphaned` for an instance on disk.
+pub fn is_orphaned(inst: &Instance) -> bool {
+    let cfg = read_config(inst);
+    let owner_alive = owner_pid(&inst.name).map(platform::pid_alive).unwrap_or(false);
+    orphaned(cfg["temporary"] == json!(true), cfg["kept"] == json!(true), inst.alive(), owner_alive)
 }
 
 fn fresh_end(inst: &Instance, info: Map<String, Value>, keep: bool, code: i32, mut resp: Value, pretty: bool) -> ! {
@@ -320,21 +393,24 @@ pub fn remove_files(inst: &Instance) {
     }
 }
 
-/// Marks an instance as temporary in its config: `stop` then deletes its files as well (a kept fresh run).
+fn read_config(inst: &Instance) -> Value {
+    std::fs::read_to_string(inst.path("config.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}))
+}
+
+/// Sets a key in the instance's config. `temporary` makes `stop` delete its files as well (a fresh run's instance).
+fn mark(inst: &Instance, key: &str, value: Value) {
+    let mut cfg = read_config(inst);
+    cfg[key] = value;
+    let _ = std::fs::write(inst.path("config.json"), cfg.to_string());
+}
+
 fn mark_temporary(inst: &Instance) {
-    let path = inst.path("config.json");
-    let mut cfg: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}));
-    cfg["temporary"] = json!(true);
-    let _ = std::fs::write(&path, cfg.to_string());
+    mark(inst, "temporary", json!(true));
 }
 
 /// Whether the instance was started by `test run --fresh`.
 pub fn is_temporary(inst: &Instance) -> bool {
-    std::fs::read_to_string(inst.path("config.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .map(|cfg| cfg["temporary"] == json!(true))
-        .unwrap_or(false)
+    read_config(inst)["temporary"] == json!(true)
 }
 
 /// `stlive test run --fresh`: a temporary instance from the template, the baseline loaded, the targets run, then the
@@ -357,6 +433,9 @@ pub fn fresh_test_run(base: &Instance, spec: FreshSpec, targets: Vec<String>, op
     }
 
     let _ = std::fs::create_dir_all(&inst.dir);
+    if let Err(e) = watch_interrupts(&inst, pretty) {
+        eprintln!("stlive: cannot catch interrupts ({}); an interrupted run may leave {} running", e, name);
+    }
     if let Err(e) = start_quiet(&inst, None, None, false) {
         let f = from_try(e);
         end(&inst, false, f.code, &fail_response(&f), pretty);
@@ -510,7 +589,7 @@ mod tests {
 
     #[test]
     fn a_clean_load_is_no_problem() {
-        let clean = json!({"ok": true, "result": {"loaded": {"warnings": []}}});
+        let clean = json!({"ok": true, "result": {"loaded": {"warnings": [], "undeclared": []}}});
         assert_eq!(load_problem("Orbit", &clean), None);
         let warned = json!({"ok": true, "result": {"loaded": {"warnings": [{"message": "Undeclared variable: x", "count": 1}]}}});
         assert_eq!(
@@ -519,6 +598,51 @@ mod tests {
         );
         let failed = json!({"ok": false, "error": {"code": "exception", "message": "boom"}});
         assert_eq!(load_problem("Orbit", &failed).unwrap(), "Loading Orbit failed: boom");
+    }
+
+    #[test]
+    fn an_undeclared_name_is_a_load_problem_that_names_it() {
+        let undeclared = json!({"ok": true, "result": {"loaded": {"warnings": [], "undeclared": [
+            {"name": "NoSuchThingXyz", "methods": ["Thing>>answer"], "method_count": 1}], "undeclared_count": 1}}});
+        assert_eq!(
+            load_problem("Orbit", &undeclared).unwrap(),
+            "Loading Orbit left 1 undeclared name(s): NoSuchThingXyz (first used by Thing>>answer)"
+        );
+        let empty = json!({"ok": true, "result": {"loaded": {"warnings": [], "undeclared": [], "undeclared_count": 0}}});
+        assert_eq!(load_problem("Orbit", &empty), None);
+    }
+
+    #[test]
+    fn undeclared_names_in_a_load_problem_are_at_most_five() {
+        let names: Vec<Value> = (1..=6).map(|i| json!({"name": format!("N{}", i), "methods": ["A>>b"], "method_count": 1})).collect();
+        let resp = json!({"ok": true, "result": {"loaded": {"undeclared": names, "undeclared_count": 6}}});
+        assert_eq!(
+            load_problem("Orbit", &resp).unwrap(),
+            "Loading Orbit left 6 undeclared name(s): N1, N2, N3, N4, N5, ... (first used by A>>b)"
+        );
+    }
+
+    #[test]
+    fn the_owner_of_a_temporary_instance_is_the_pid_in_its_name() {
+        assert_eq!(owner_pid("fresh-4242-1700000000000"), Some(4242));
+        assert_eq!(owner_pid("default"), None);
+        assert_eq!(owner_pid("fresh-x-1"), None);
+        assert_eq!(owner_pid("fresh-"), None);
+    }
+
+    #[test]
+    fn a_temporary_instance_is_orphaned_when_nobody_can_use_it() {
+        // its run is going on
+        assert!(!orphaned(true, false, true, true));
+        // its run is gone and did not keep it
+        assert!(orphaned(true, false, true, false));
+        // its run is gone, but the run kept it on purpose (until `stop`)
+        assert!(!orphaned(true, true, true, false));
+        // its image is dead, kept or not
+        assert!(orphaned(true, true, false, true));
+        assert!(orphaned(true, false, false, true));
+        // an instance that was not started by a fresh run is never an orphan
+        assert!(!orphaned(false, false, false, false));
     }
 
     #[test]

@@ -560,12 +560,72 @@ ST
 for i in $(seq 1 40); do [ -s "$WORK/dist/check.txt" ] && break; sleep 0.5; done
 out="{\"v\":\"$(cat "$WORK/dist/check.txt" 2>/dev/null)\"}"; check "exported image: server gone, application kept" '.v' "false,42"
 
-# --- StLive-Tests (SUnit, in the image)
-# The export above ended the instance: start one again, then load the Tests group from the template sources (the same
-# repository the image was prepared from, so Metacello does not see a conflicting project). The group is the framework
-# (the same sources the start has just loaded) plus StLive-Tests; the summary of this load names what was added.
+# --- 0.8.1: names that methods reference but nothing defines: a load lists them, a fresh run fails with load_failed
+mkdir -p undeclsrc/BaselineOfE2EUndecl undeclsrc/E2EUndecl undeclsrc/BaselineOfE2EClean undeclsrc/E2EClean
+printf "Package { #name : 'BaselineOfE2EUndecl' }\n" > undeclsrc/BaselineOfE2EUndecl/package.st
+printf "Package { #name : 'E2EUndecl' }\n" > undeclsrc/E2EUndecl/package.st
+printf "Package { #name : 'BaselineOfE2EClean' }\n" > undeclsrc/BaselineOfE2EClean/package.st
+printf "Package { #name : 'E2EClean' }\n" > undeclsrc/E2EClean/package.st
+baseline undeclsrc/BaselineOfE2EUndecl/BaselineOfE2EUndecl.class.st BaselineOfE2EUndecl "spec package: 'E2EUndecl'"
+baseline undeclsrc/BaselineOfE2EClean/BaselineOfE2EClean.class.st BaselineOfE2EClean "spec package: 'E2EClean'"
+printf "Class {\n\t#name : 'E2EUndeclThing',\n\t#superclass : 'Object',\n\t#package : 'E2EUndecl'\n}\n\n{ #category : 'x' }\nE2EUndeclThing >> answer [\n\t^ E2ENoSuchThingXyz new\n]\n" > undeclsrc/E2EUndecl/E2EUndeclThing.class.st
+printf "Class {\n\t#name : 'E2ECleanThing',\n\t#superclass : 'Object',\n\t#package : 'E2EClean'\n}\n\n{ #category : 'x' }\nE2ECleanThing >> answer [\n\t^ Object new\n]\n" > undeclsrc/E2EClean/E2ECleanThing.class.st
 $S start >/dev/null
-out=$($S load StLive --repository "tonel://$STLIVE_HOME/src" --group Tests); check "StLive-Tests loaded with the Tests group" '.result.loaded.new_packages|contains(["StLive-Tests"])'
+out=$($S load E2EClean --repository "tonel://$WORK/undeclsrc"); check "a clean baseline has undeclared: []" '.result.loaded.undeclared' '[]'
+out=$($S load E2EUndecl --repository "tonel://$WORK/undeclsrc"); check "load lists the missing name" '.result.loaded.undeclared[0].name' E2ENoSuchThingXyz
+check "load names the method that references it" '.result.loaded.undeclared[0].methods[0]' 'E2EUndeclThing>>answer'
+check "an undeclared name is not a warning" '.result.loaded.warnings' '[]'
+out=$($S test run --fresh --load E2EUndecl --repository "tonel://$WORK/undeclsrc"); RC=$?
+check "fresh: an undeclared name fails with load_failed" '.error.code' load_failed
+check "fresh: the message names the undeclared name" '.error.message|contains("E2ENoSuchThingXyz")' true
+[ "$RC" -eq 6 ] && { pass=$((pass+1)); echo "ok   - fresh: undeclared name exits 6"; } || { fail=$((fail+1)); echo "FAIL - undeclared fresh exit code $RC"; }
+
+# --- 0.8.1: SIGINT / SIGTERM during a fresh run: the temporary instance is stopped and deleted, exit 130 / 143
+mkdir -p slowsrc/BaselineOfE2ESlow slowsrc/E2ESlow slowsrc/E2ESlow-Tests
+printf "Package { #name : 'BaselineOfE2ESlow' }\n" > slowsrc/BaselineOfE2ESlow/package.st
+printf "Package { #name : 'E2ESlow' }\n" > slowsrc/E2ESlow/package.st
+printf "Package { #name : 'E2ESlow-Tests' }\n" > slowsrc/E2ESlow-Tests/package.st
+baseline slowsrc/BaselineOfE2ESlow/BaselineOfE2ESlow.class.st BaselineOfE2ESlow "spec package: 'E2ESlow'. spec package: 'E2ESlow-Tests'"
+printf "Class {\n\t#name : 'E2ESlowThing',\n\t#superclass : 'Object',\n\t#package : 'E2ESlow'\n}\n" > slowsrc/E2ESlow/E2ESlowThing.class.st
+printf "Class {\n\t#name : 'E2ESlowTest',\n\t#superclass : 'TestCase',\n\t#package : 'E2ESlow-Tests'\n}\n\n{ #category : 'x' }\nE2ESlowTest >> testSlow [\n\t(Delay forSeconds: 20) wait.\n\tself assert: true\n]\n" > slowsrc/E2ESlow-Tests/E2ESlowTest.class.st
+for SIG in INT TERM; do
+  "$BIN" test run --fresh --load E2ESlow --repository "tonel://$WORK/slowsrc" > "$WORK/int-$SIG.out" 2>&1 &
+  PID=$!
+  for i in $(seq 1 300); do ls "$WORK/.stlive"/fresh-$PID-*.port.json >/dev/null 2>&1 && break; sleep 0.2; done
+  sleep 3; kill -$SIG $PID; wait $PID; RC=$?
+  WANT=130; [ $SIG = TERM ] && WANT=143
+  [ "$RC" -eq $WANT ] && { pass=$((pass+1)); echo "ok   - SIG$SIG during a fresh run exits $WANT"; } || { fail=$((fail+1)); echo "FAIL - SIG$SIG exit code $RC (want $WANT)"; }
+  [ -z "$(ls "$WORK/.stlive" | grep "^fresh-$PID-")" ] && { pass=$((pass+1)); echo "ok   - SIG$SIG: no temporary instance files left"; } || { fail=$((fail+1)); echo "FAIL - SIG$SIG left files"; ls "$WORK/.stlive"; }
+  pgrep -f "fresh-$PID-" >/dev/null && { fail=$((fail+1)); echo "FAIL - SIG$SIG: a Pharo process of the run is still running"; } || { pass=$((pass+1)); echo "ok   - SIG$SIG: no Pharo process of the run left"; }
+  grep -q "\"code\":\"interrupted\"" "$WORK/int-$SIG.out" && { pass=$((pass+1)); echo "ok   - SIG$SIG: the response says interrupted"; } || { fail=$((fail+1)); echo "FAIL - SIG$SIG response"; cat "$WORK/int-$SIG.out" | cut -c1-300; }
+done
+
+# --- 0.8.1: orphaned temporary instances. A kept run's instance is not an orphan while its image lives; an instance whose
+# image died or whose owner is gone without keeping it is one, and `instances --prune-temporary` removes it.
+out=$($S test run --fresh --keep --load E2ESlow --repository "tonel://$WORK/slowsrc"); ORPH=$(echo "$out" | jq -r .result.instance)
+check "fresh --keep of a failing slow test names its instance" '.result.kept' true
+out=$($S instances); check "the kept instance is temporary and not orphaned" ".result.instances[]|select(.name==\"$ORPH\")|[.temporary,.orphaned]|join(\",\")" "true,false"
+sh -c 'exit 0' & DEAD=$!; wait $DEAD
+printf '{"temporary": true}' > "$WORK/.stlive/fresh-$DEAD-1.config.json"
+out=$($S instances --prune-temporary); check "prune removes an instance whose owner is gone" '.result.pruned|join(",")' "fresh-$DEAD-1"
+out=$($S -i "$ORPH" ping); check "prune leaves the live kept instance alone" '.result.pong' true
+KPID=$(cat "$WORK/.stlive/$ORPH.pid"); kill -9 "$KPID"
+for i in $(seq 1 50); do kill -0 "$KPID" 2>/dev/null || break; sleep 0.2; done
+out=$($S instances); check "a kept instance whose image died is orphaned" ".result.instances[]|select(.name==\"$ORPH\")|[.temporary,.orphaned]|join(\",\")" "true,true"
+out=$($S instances --prune-temporary); check "prune removes the orphaned kept instance" '.result.pruned|join(",")' "$ORPH"
+[ -z "$(ls "$WORK/.stlive" | grep "^$ORPH\.")" ] && { pass=$((pass+1)); echo "ok   - pruned instance files are gone"; } || { fail=$((fail+1)); echo "FAIL - pruned instance files left"; }
+
+# --- StLive-Tests (SUnit, in the image)
+# The export above ended the instance: start one again, then load the Tests group from the sources of this binary: the
+# directory `start` names (the image registers the baseline from there). The group is the framework (the same sources
+# the start has just loaded) plus StLive-Tests; the summary of this load names what was added. start leaves the
+# template's own copy (home/src, written by init) alone.
+HOME_MT=$(stat -c %Y "$STLIVE_HOME/src/StLive/StLiveCommands.class.st")
+$S stop --force >/dev/null
+out=$($S start); SRC=$(echo "$out" | jq -r .result.sources)
+check "start names the sources directory of this binary" '.result.sources|test("/src-[0-9a-f]+$")' true
+[ "$(stat -c %Y "$STLIVE_HOME/src/StLive/StLiveCommands.class.st")" = "$HOME_MT" ] && { pass=$((pass+1)); echo "ok   - start leaves the template's src alone"; } || { fail=$((fail+1)); echo "FAIL - start rewrote the template's src"; }
+out=$($S load StLive --repository "tonel://$SRC" --group Tests); check "StLive-Tests loaded with the Tests group" '.result.loaded.new_packages|contains(["StLive-Tests"])'
 out=$($S test run StLive-Tests); check "StLive-Tests: no failing test" '.result.failed' 0
 check "StLive-Tests: more than 100 tests ran" '.result.ran>100'
 $S debug terminate --all >/dev/null

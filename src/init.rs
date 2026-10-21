@@ -60,15 +60,18 @@ const SOURCES: &[(&str, &str)] = &[
     ("StLive-Tests/StLiveServerTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveServerTest.class.st")),
     ("StLive-Tests/StLiveSourceNormalisationTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveSourceNormalisationTest.class.st")),
     ("StLive-Tests/StLiveSuggestionsTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveSuggestionsTest.class.st")),
+    ("StLive-Tests/StLiveUndeclaredReferencesTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveUndeclaredReferencesTest.class.st")),
 ];
 
 /// Startup script run by every `start`: upgrades the server inside the image if it was built from other sources, then starts it.
+/// The sources come from this binary's own directory, so the image may have registered the StLive baseline from another
+/// one (the template, or an earlier binary): `onConflictUseIncoming` replaces that registration instead of refusing.
 const UPGRADE_ST: &str = r#"| env hash current run code |
 env := Smalltalk os environment.
 hash := env at: 'STLIVE_SOURCES_HASH' ifAbsent: [ nil ].
 current := (Smalltalk globals at: #StLiveServer ifAbsent: [ nil ]) ifNotNil: [ :c | (c respondsTo: #installedHash) ifTrue: [ c installedHash ] ].
 (hash notNil and: [ hash ~= current and: [ (env at: 'STLIVE_SRC' ifAbsent: [ nil ]) notNil ] ]) ifTrue: [
-	[ Metacello new baseline: 'StLive'; repository: 'tonel://' , (env at: 'STLIVE_SRC'); load.
+	[ Metacello new baseline: 'StLive'; repository: 'tonel://' , (env at: 'STLIVE_SRC'); onConflictUseIncoming; load.
 	(Smalltalk globals at: #StLiveServer) installedHash: hash ]
 		on: Error
 		do: [ :e | Stdio stdout nextPutAll: 'stlive: could not upgrade the server in this image: ' , e messageText asString; lf; flush ] ].
@@ -148,15 +151,45 @@ fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("{} failed ({})", what, status)) }
 }
 
-/// Write the embedded Smalltalk sources below `<home>/src` (used by init and attach).
-pub fn write_sources(home: &Path) -> Result<PathBuf, String> {
-    let src = home.join("src");
+/// Write the embedded Smalltalk sources below `dir`, one file per entry of SOURCES.
+fn write_source_tree(dir: &Path) -> Result<(), String> {
     for (rel, content) in SOURCES {
-        let path = src.join(rel);
+        let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
         std::fs::write(&path, content).map_err(|e| e.to_string())?;
     }
-    Ok(src)
+    Ok(())
+}
+
+/// Where this binary's sources are: `<home>/src-<sources hash>`. Every stlive version has its own directory, so two
+/// binaries sharing one home never overwrite each other's sources (start, run and attach load from here).
+pub fn sources_dir(home: &Path) -> PathBuf {
+    home.join(format!("src-{}", sources_hash()))
+}
+
+/// Make sure `sources_dir(home)` holds this binary's sources and answer it. The tree is filled under a temporary name
+/// and renamed into place, so a concurrent start never loads a half-written tree; an existing tree is never rewritten.
+pub fn write_sources(home: &Path) -> Result<PathBuf, String> {
+    let dir = sources_dir(home);
+    if dir.is_dir() {
+        return Ok(dir);
+    }
+    let name = dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let tmp = home.join(format!("{}.tmp-{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    if let Err(e) = write_source_tree(&tmp) {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
+    match std::fs::rename(&tmp, &dir) {
+        Ok(()) => Ok(dir),
+        // another process put its complete tree there first (same name, same content)
+        Err(_) if dir.is_dir() => {
+            let _ = std::fs::remove_dir_all(&tmp);
+            Ok(dir)
+        }
+        Err(e) => Err(format!("{}: {}", dir.display(), e)),
+    }
 }
 
 /// Names of the packages of a pristine image (written by `init`), for `attach`.
@@ -202,8 +235,9 @@ pub fn init(home: &Path, force: bool, local: Option<(PathBuf, PathBuf)>) -> Resu
         None => find_vm(&pharo_dir).ok_or("Pharo VM not found after download")?,
     };
 
-    // 2. Sources
-    let src = write_sources(home)?;
+    // 2. Sources: the template's copy (home/src, the tree the template image was built from)
+    let src = home.join("src");
+    write_source_tree(&src)?;
     std::fs::write(home.join("prepare.st"), PREPARE_ST).map_err(|e| e.to_string())?;
 
     // 3a. Base image + NeoJSON, built once and cached (network only here; re-running `init` after an stlive update is offline)
@@ -324,6 +358,25 @@ mod tests {
         let r = init(&home, false, Some((vm, base.clone())));
         assert!(r.is_err());
         assert_eq!(std::fs::read(&base).unwrap(), b"image bytes");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn sources_are_written_once_under_the_hash_of_the_binary() {
+        let home = std::env::temp_dir().join(format!("stlive-src-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let dir = write_sources(&home).unwrap();
+        assert_eq!(dir, home.join(format!("src-{}", sources_hash())));
+        let written = std::fs::read_to_string(dir.join("StLive/StLiveCommands.class.st")).unwrap();
+        assert_eq!(written, include_str!("../smalltalk/src/StLive/StLiveCommands.class.st"));
+        assert!(dir.join("StLive-Tests/StLiveUndeclaredReferencesTest.class.st").exists());
+        // the tree is in place: a second call answers the same directory and leaves it alone
+        std::fs::write(dir.join("marker"), b"kept").unwrap();
+        assert_eq!(write_sources(&home).unwrap(), dir);
+        assert_eq!(std::fs::read(dir.join("marker")).unwrap(), b"kept");
+        // no temporary tree is left next to it
+        assert!(std::fs::read_dir(&home).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains(".tmp-")));
         std::fs::remove_dir_all(&home).unwrap();
     }
 
