@@ -79,6 +79,8 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead �
 - `image stop`/`stop --force` and `method remove --force` are destructive – only when asked.
 - An unhandled error in a process your program forked does not end the headless image: it is logged in the instance log and listed by `image info` under `background_errors` (type, message, ten frames); only that process was terminated. Check it when something that runs in the background stops working.
 - Many red tests: the image keeps at most 60 debug sessions; `test run` keeps one per failure group and reports the rest as `sessions_ended`. Use `--keep-sessions` only for small runs.
+- Semaphore timeouts: `waitTimeoutSeconds:` and `waitTimeoutMilliseconds:` (`waitTimeoutMSecs:` is the deprecated alias) answer `true` when the wait TIMED OUT and `false` when the semaphore was signalled – the opposite of what many expect. Check it accordingly: `(sem waitTimeoutSeconds: 5) ifTrue: [ ^ self error: 'timeout' ]`.
+- Line endings in string literals: a method loaded from Tonel files gets CR line endings in its source (Pharo's internal convention), so a multi-line literal arrives in the image with CR, not LF. When the string must contain LF (HTTP, JSON, files for other tools), build it explicitly: `String lf join: #(...)` or `aString withUnixLineEndings`.
 
 ## Report
 State the cause, the minimal diff, which tests ran (counts), and what you could not verify.
