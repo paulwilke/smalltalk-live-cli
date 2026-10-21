@@ -621,7 +621,7 @@ StLiveCommands >> cmdImageExport: args [
 	[ (Delay forMilliseconds: 400) wait.
 	(script isEmpty not) ifTrue: [
 		Smalltalk compiler evaluate: script.
-		(Smalltalk compiler evaluate: '(PackageOrganizer default packageNamed: ''StLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. (PackageOrganizer default packageNamed: ''BaselineOfStLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. nil') ].
+		(Smalltalk compiler evaluate: '(PackageOrganizer default packageNamed: ''StLive-Tests'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. (PackageOrganizer default packageNamed: ''StLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. (PackageOrganizer default packageNamed: ''BaselineOfStLive'' ifAbsent: [ nil ]) ifNotNil: [ :p | p removeFromSystem ]. nil') ].
 	Smalltalk garbageCollect.
 	"saveAs: answers a SnapshotOperation, not a Boolean: tell the running session from the restored one by the session object."
 	sessionBefore := Smalltalk session.

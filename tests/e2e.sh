@@ -560,4 +560,14 @@ ST
 for i in $(seq 1 40); do [ -s "$WORK/dist/check.txt" ] && break; sleep 0.5; done
 out="{\"v\":\"$(cat "$WORK/dist/check.txt" 2>/dev/null)\"}"; check "exported image: server gone, application kept" '.v' "false,42"
 
+# --- StLive-Tests (SUnit, in the image)
+# The export above ended the instance: start one again, then load the Tests group from the template sources (the same
+# repository the image was prepared from, so Metacello does not see a conflicting project). The group is the framework
+# (the same sources the start has just loaded) plus StLive-Tests; the summary of this load names what was added.
+$S start >/dev/null
+out=$($S load StLive --repository "tonel://$STLIVE_HOME/src" --group Tests); check "StLive-Tests loaded with the Tests group" '.result.loaded.new_packages|contains(["StLive-Tests"])'
+out=$($S test run StLive-Tests); check "StLive-Tests: no failing test" '.result.failed' 0
+check "StLive-Tests: more than 100 tests ran" '.result.ran>100'
+$S debug terminate --all >/dev/null
+
 echo; echo "passed: $pass, failed: $fail"; [ $fail -eq 0 ]

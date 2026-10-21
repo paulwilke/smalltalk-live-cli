@@ -44,6 +44,22 @@ const SOURCES: &[(&str, &str)] = &[
     ("StLive/StLiveRun.class.st", include_str!("../smalltalk/src/StLive/StLiveRun.class.st")),
     ("StLive/StLiveTranscriptTee.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptTee.class.st")),
     ("StLive/StLiveTranscriptProxy.class.st", include_str!("../smalltalk/src/StLive/StLiveTranscriptProxy.class.st")),
+    // the StLive-Tests package: loaded only by the Tests group (`stlive load StLive --group Tests`), never by init
+    ("StLive-Tests/package.st", include_str!("../smalltalk/src/StLive-Tests/package.st")),
+    ("StLive-Tests/StLiveTestCase.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveTestCase.class.st")),
+    ("StLive-Tests/StLiveBaselinePackagesTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveBaselinePackagesTest.class.st")),
+    ("StLive-Tests/StLiveBaselineShapeTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveBaselineShapeTest.class.st")),
+    ("StLive-Tests/StLiveBaselineVersionTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveBaselineVersionTest.class.st")),
+    ("StLive-Tests/StLiveChangeLogTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveChangeLogTest.class.st")),
+    ("StLive-Tests/StLiveClassLookupTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveClassLookupTest.class.st")),
+    ("StLive-Tests/StLiveCommandsHelpersTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveCommandsHelpersTest.class.st")),
+    ("StLive-Tests/StLiveCommandsLineEndingsTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveCommandsLineEndingsTest.class.st")),
+    ("StLive-Tests/StLiveCommentRecordingTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveCommentRecordingTest.class.st")),
+    ("StLive-Tests/StLiveCompileErrorTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveCompileErrorTest.class.st")),
+    ("StLive-Tests/StLiveDescriberTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveDescriberTest.class.st")),
+    ("StLive-Tests/StLiveServerTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveServerTest.class.st")),
+    ("StLive-Tests/StLiveSourceNormalisationTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveSourceNormalisationTest.class.st")),
+    ("StLive-Tests/StLiveSuggestionsTest.class.st", include_str!("../smalltalk/src/StLive-Tests/StLiveSuggestionsTest.class.st")),
 ];
 
 /// Startup script run by every `start`: upgrades the server inside the image if it was built from other sources, then starts it.
