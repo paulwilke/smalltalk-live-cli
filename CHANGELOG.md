@@ -1,12 +1,29 @@
 # Changelog
 
-## 0.7.1 (not released yet) – feedback from the Orbit rebuild
+## 0.8.0 – feedback from the Orbit rebuild
+**Fresh runs and test sets**
+- **`stlive test run` takes several targets and glob patterns**: `stlive test run 'Orbit-*-Tests' Other-Tests 'Foo>>testBar'` runs them as one run (each test once); `*`/`?` match packages and test class names; no match → `no_tests_matched`. The result lists `targets` and `expanded`.
+- **`stlive test run --fresh --load <Baseline> --repository tonel://… [--group G] [targets]`**: a temporary instance from the template, the baseline loaded, the tests run, the instance stopped and deleted – the user's own instance is never touched. Without targets it runs the `*-Tests` packages the load added. A failed load (error, warnings or undeclared names) exits **6** (`load_failed`); `--keep` leaves the instance running to debug red tests (`result.instance`). Ctrl-C / SIGTERM stop and delete the temporary instance (exit **130** / **143**); `stlive instances` shows `temporary` / `orphaned`, `stlive instances --prune-temporary` removes orphans.
+- **`load` reports undeclared names**: `undeclared` lists names that methods of the loaded packages reference but nothing defines, with the referencing methods (Pharo 13 registers them silently; they fail only at run time). Plain `load` still exits 0.
+
+**Saved images**
+- **Fix: a saved image did not come up again** (seen on macOS: 100 % CPU, no port file, even `Pharo saved.image eval "1+1"` hung). The acceptor process was saved with the image and, after the next start, looped on the dead listener at priority 50, starving the startup. The server now hooks into `SessionManager`: the acceptor ends before every snapshot (`image save`, `image export --keep-server`, a plain `Smalltalk snapshot:`), the earlier session's listener and processes are dropped after a restart, and the accept loop never spins. An image saved by stlive ≤ 0.7.x may already contain a spinning acceptor that no start can repair: delete that instance's image (`.stlive/<instance>.image`), `start` rebuilds it from the template.
+- The instance log says what happened: `stlive: server starting`, `stlive: port file written …`, `stlive: server did not start: …`; when `start` times out it appends `port file not written within 60 s` and shows the last log lines.
+
+**Reloading, saving and drift** (planned as 0.7.1, released here)
 - **`save` writes a changed class comment** of an existing class back to its Tonel file (replaced, added or removed); comment changes made through `eval` (`Foo comment: '…'`) are recorded.
 - **`method compile` compiles with CR line endings**, like the Tonel loader: a multi-line string literal now holds the same characters whether the method was compiled through stlive or loaded from files. Recorded source, diffs, `method show` and error positions stay LF.
 - **Fix: a method whose body starts on its header line** (`Foo >> baseline: spec [ <baseline>`) was read with a wrong selector (`baseline:[`): `drift` reported drift without any change and `save` appended a duplicate instead of replacing it.
 - **`load` reports what it does not touch**: `stale_packages` (loaded packages the baseline no longer lists), `not_reloaded_packages` (loaded packages outside the requested groups, with a `--group` hint). `load --prune` unloads the stale ones; packages with unsaved changes or listed by another loaded baseline stay (`prune_skipped`). `drift --all` reports packages a baseline in `--dir` lists that are loaded but have no folder (`packages_missing_in_files`).
-- Skill: `Semaphore>>waitTimeoutSeconds:` answers `true` on timeout; string literals loaded from Tonel hold CR.
-- 127 e2e checks, 17 Rust unit tests.
+- `drift` and `save` read methods written on one line (`Foo >> one [ ^ 1 ]`); before, drift reported them as missing in files and `save` could not replace them.
+- A package a baseline dropped stays in `stale_packages` across `image save` and a restart until `load --prune` removes it.
+
+**Internals and tests**
+- Each stlive binary writes its embedded Smalltalk sources to its own `~/.stlive/src-<hash>` (reported by `start` as `sources`), so two stlive versions sharing one home no longer overwrite each other's sources. To load StLive's own `Tests` group into an instance, use that `sources` directory.
+- **SUnit tests for the server** (`StLive-Tests`, 150 tests, group `Tests` of `BaselineOfStLive`, not loaded by `init`, removed by `image export`), run by the e2e suite through `stlive test run StLive-Tests`.
+- New dependency: `signal-hook` (MIT/Apache-2.0).
+- Skill: `Semaphore>>waitTimeoutSeconds:` answers `true` on timeout; string literals loaded from Tonel hold CR; `test run --fresh`, patterns, `undeclared`.
+- 203 headless e2e checks and 36 Rust unit tests, run on Linux x86-64. The 19 GUI checks were not re-run for this release (no display in the build environment).
 
 ## 0.7.0 – gaps found while rebuilding a multi-module system with stlive
 - **`STLIVE_DIR` is the home when `STLIVE_HOME` is unset.** An environment that only sets the state directory no longer clones from, or `init`s into, `~/.stlive` by accident; it gets `not_initialized` until `stlive init` runs there.

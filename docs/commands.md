@@ -10,7 +10,7 @@ Usage: stlive [OPTIONS] <COMMAND>
 Commands:
   init       One-time setup: download Pharo 13 and build an image with the StLive server
   attach     Load the StLive server into an image that is ALREADY running (another stlive/pharoctl server on --port)
-  instances  List instances known in the state directory
+  instances  List instances known in the state directory. Temporary ones (from `test run --fresh`) are marked, and so are the orphaned ones: their run is gone, or their image died
   start      Start the image headless in the background
   stop       Stop the image (destructive: unsaved state and debug sessions are lost)
   status     Image identity and status
@@ -206,12 +206,13 @@ Options:
 ## `stlive instances`
 
 ```
-List instances known in the state directory
+List instances known in the state directory. Temporary ones (from `test run --fresh`) are marked, and so are the orphaned ones: their run is gone, or their image died
 
 Usage: stlive instances [OPTIONS]
 
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
+      --prune-temporary        Stop and delete the orphaned temporary instances
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                 Pretty-print JSON
       --log <LOG>              Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]

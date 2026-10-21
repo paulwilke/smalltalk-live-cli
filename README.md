@@ -116,11 +116,18 @@ stlive eval 'MyClass new run'
 stlive stop --force
 ```
 
+A clean check in a fresh image, without touching your instance – instead of start/load/test/stop scripts:
+
+```bash
+stlive test run --fresh --load MyProject --repository tonel://$PWD/src --group Tests        # exit 0, 1 (red tests) or 6 (load failed)
+stlive test run 'MyProject-*-Tests'                                                          # several packages by pattern
+```
+
 Several images can run side by side (`--instance NAME`, `stlive image clone`, `stlive instances`). `--text` prints an indented human-readable form instead of JSON; `--pretty` pretty-prints JSON.
 
 `--log FILE` (or `STLIVE_LOG`) appends one JSON line per call (time, command, duration, output size, ok, key result fields) and `--tag`/`STLIVE_TAG` marks a scene or task – metadata and a 60-character summary of the call, never full code.
 
-Exit codes: `0` ok · `1` command failed, exception in the image or failing tests · `2` usage · `3` image not running/unreachable · `4` protocol error · `5` timeout.
+Exit codes: `0` ok · `1` command failed, exception in the image or failing tests · `2` usage · `3` image not running/unreachable · `4` protocol error · `5` timeout · `6` `test run --fresh`: the load failed (error, warnings or undeclared names) · `130`/`143` a fresh run was interrupted (SIGINT/SIGTERM; its temporary instance is removed).
 
 ### Already have a running image?
 
@@ -139,7 +146,7 @@ An image started by an older version of this tool (or any server that speaks the
 | Image | `init` (`--vm`/`--image` for a local Pharo), `attach`, `start`, `stop --force`, `status`, `ping`, `instances`, `image info\|save\|clone`, `load` (re-loading updates loaded packages – also ones modified in the image – and the baseline itself) |
 | Evaluate | `eval` (stdin with `-`, `--in <ref>` as receiver, `--timeout`, `--full` complete text, `--no-session`; Transcript and deprecations reported separately) |
 | Code | `find class\|package\|implementors\|senders`, `class show\|create` (class-side ivars, class variables, comment, `--trait`, `--traits`), `method show\|compile\|remove`, `package list`, `changes list\|show\|watch` |
-| Tests | `test list`, `test run` (what SUnit's `buildSuite` runs – inherited tests and every parameter combination of a `ParametrizedTestCase` included; per test isolation, failures **grouped by cause**, one session kept per group; `skipped` counted separately, `--skips-fail` makes them fail) |
+| Tests | `test list`, `test run` (several targets and glob patterns such as `'App-*-Tests'`; `--fresh --load B --repository …` in a temporary image; what SUnit's `buildSuite` runs – inherited tests and every parameter combination of a `ParametrizedTestCase` included; per test isolation, failures **grouped by cause**, one session kept per group; `skipped` counted separately, `--skips-fail` makes them fail) |
 | Objects | `obj show\|items\|var\|text\|compare\|referrers\|graph\|release` – paged, with stable references; `graph` marks cycles and shared nodes |
 | Debugging | `debug list\|inspect\|frames\|frame\|locals\|receiver\|eval\|resume\|restart\|return\|rerun\|terminate` |
 | Run / verify | `run --load src --eval … -- args` (fresh image, clean stdout, exit codes), `drift`, `save --verify` |
@@ -157,7 +164,7 @@ The delivered image contains your application but no stlive classes and no evalu
 
 ## Status and what is still open
 
-**Works and is tested** (127 headless + 19 GUI end-to-end checks and 17 Rust unit tests on macOS arm64, Pharo 13; the headless checks also on Linux x86-64): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
+**Works and is tested** (203 headless + 19 GUI end-to-end checks, 150 SUnit tests of the server and 36 Rust unit tests, Pharo 13; macOS arm64 and Linux x86-64 – the 0.8.0 headless checks ran on Linux, the GUI checks were last run on macOS for 0.7.0): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
 
 **Open / not yet verified:**
 - Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
@@ -175,7 +182,7 @@ Short version: this is a CLI because a shell is the one integration point every 
 - The server listens on `127.0.0.1` only, on an ephemeral port published in the instance's state directory. There is **no authentication**: anyone who can connect to that local port can execute arbitrary Smalltalk in the image. Treat it like a local dev REPL, not a service.
 - Destructive operations (`stop`, `method remove`) need `--force`. Output is bounded everywhere; endless loops become sessions after `--timeout` instead of hanging.
 - References and sessions carry the image's run id, so they are rejected as `stale_ref` after a restart rather than silently pointing at something else.
-- `load` lets the files win: a package that was modified in the image (methods compiled through stlive) is overwritten by a re-load and its unsaved recorded changes are marked superseded, so a later `save` cannot resurrect them. Save first if you want to keep such changes. A package the baseline no longer lists stays in the image and is reported as `stale_packages`; `load --prune` unloads it (not when it has unsaved changes). Packages of groups that were not requested are reported as `not_reloaded_packages`.
+- `load` lets the files win: a package that was modified in the image (methods compiled through stlive) is overwritten by a re-load and its unsaved recorded changes are marked superseded, so a later `save` cannot resurrect them. Save first if you want to keep such changes. A package the baseline no longer lists stays in the image and is reported as `stale_packages`; `load --prune` unloads it (not when it has unsaved changes). Packages of groups that were not requested are reported as `not_reloaded_packages`, and names that the loaded code references but nothing defines as `undeclared`.
 
 ## Limitations
 
@@ -183,6 +190,9 @@ Short version: this is a CLI because a shell is the one integration point every 
 
 - Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).
+- An image saved by stlive 0.7.x or older can contain a running acceptor process that makes it hang at the next start (seen on macOS). Delete that instance's image; `start` rebuilds it from the template. Images saved by 0.8.0 do not have this problem.
+- A method compiled from inside `eval` (`Foo compile: '…'`) keeps the line endings typed in the expression (LF) in the live image; `method compile` and Tonel loads use CR. The files are LF either way.
+- `stop` discards unsaved state (also loaded packages): `image save` first to keep it.
 - No single-stepping (`step into/over`) yet; sessions can be restarted per frame, resumed, or have a frame return a value.
 - `save` knows classes, traits, instance/class-side methods, extensions and removals of methods, and updates the variable lists (`#instVars`, `#classVars`, `#classInstVars`) of an existing definition while keeping its other lines (`#traits`, `#classTraits`, `#category`); it writes a changed class comment back, but does not rewrite a changed superclass or trait composition of an existing class.
 - A headless image no longer quits on an unhandled error in a process that is not an stlive job (a forked process of your application): the error is logged (instance log, `image info` → `background_errors`) and only that process ends. In GUI mode Pharo's debugger opens as usual.
