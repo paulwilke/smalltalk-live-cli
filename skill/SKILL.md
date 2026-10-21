@@ -5,7 +5,7 @@ description: Work inside a running Pharo (Smalltalk) image with the `stlive` CLI
 
 # stlive – live development in a Pharo image
 
-Every command prints JSON: `{"ok":true,"result":...}` or `{"ok":false,"error":...}` (use `--text` for a readable form). Use `jq` to pick fields; never dump big results – ask for the part you need. Exit code 0 = ok, 1 = failure/exception/failing tests, 3 = image not running.
+Every command prints JSON: `{"ok":true,"result":...}` or `{"ok":false,"error":...}` (use `--text` for a readable form). Use `jq` to pick fields; never dump big results – ask for the part you need. Exit code 0 = ok, 1 = failure/exception/failing tests, 2 = usage, 3 = image not running, 5 = timeout, 6 = `test run --fresh`: the load failed, 130/143 = a fresh run was interrupted.
 
 ## Setup
 ```bash
@@ -75,13 +75,17 @@ For web UIs run `stlive open-ui <url>` (chromeless Chrome/Edge window) instead �
 - `eval --no-session` for exploratory snippets so typos do not leave suspended sessions; `eval --full` for the complete text of a value.
 - `obj graph <ref> --depth 3` shows identity, shared references and cycles; `obj referrers <ref>` answers who points to an object.
 - `stlive image export <file> --force` ships a copy of the image without the stlive server.
+- Class comments: change them in the image (`eval "Foo comment: '…'"` or `class create … --comment`); `save` writes them to the Tonel file. Do not edit the Tonel files by hand for this.
+- `stop` discards everything not saved with `image save` (state, loaded packages). An instance that does not come up again (no port file, `start` times out, the VM at 100 % CPU) may have an image saved by stlive 0.7.x or older: read the log lines `start` prints, then delete `.stlive/<instance>.image` – `start` rebuilds it from the template – and `load` the baseline again.
+- `drift --all --dir src` also reports packages a baseline in `src` lists that are loaded but have no folder (`packages_missing_in_files`).
+- Leftovers of interrupted `test run --fresh` runs: `stlive instances` shows them as `orphaned`, `stlive instances --prune-temporary` removes them.
 - `--log file --tag name` records a call log (metadata plus a 60-character summary). `changes watch` streams new changes.
 - Edits made with `eval` (`compile:`, new instance variables, ...) are recorded too and included by `save`.
 - `image stop`/`stop --force` and `method remove --force` are destructive – only when asked.
 - An unhandled error in a process your program forked does not end the headless image: it is logged in the instance log and listed by `image info` under `background_errors` (type, message, ten frames); only that process was terminated. Check it when something that runs in the background stops working.
 - Many red tests: the image keeps at most 60 debug sessions; `test run` keeps one per failure group and reports the rest as `sessions_ended`. Use `--keep-sessions` only for small runs.
 - Semaphore timeouts: `waitTimeoutSeconds:` and `waitTimeoutMilliseconds:` (`waitTimeoutMSecs:` is the deprecated alias) answer `true` when the wait TIMED OUT and `false` when the semaphore was signalled – the opposite of what many expect. Check it accordingly: `(sem waitTimeoutSeconds: 5) ifTrue: [ ^ self error: 'timeout' ]`.
-- Line endings in string literals: a method loaded from Tonel files gets CR line endings in its source (Pharo's internal convention), so a multi-line literal arrives in the image with CR, not LF (`method compile` does the same since 0.7.1). When the string must contain LF (HTTP, JSON, files for other tools), build it explicitly: `String lf join: #(...)` or `aString withUnixLineEndings`.
+- Line endings in string literals: a method loaded from Tonel files gets CR line endings in its source (Pharo's internal convention), so a multi-line literal arrives in the image with CR, not LF (`method compile` does the same since 0.8.0). When the string must contain LF (HTTP, JSON, files for other tools), build it explicitly: `String lf join: #(...)` or `aString withUnixLineEndings`.
 
 ## Report
 State the cause, the minimal diff, which tests ran (counts), and what you could not verify.
