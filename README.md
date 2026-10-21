@@ -90,12 +90,14 @@ stlive method compile MyPresenter --ui --file new.st    # change code while the 
 
 An error inside the UI process becomes an ordinary stlive debug session – **no Pharo debugger window** appears and the GUI keeps running. That gives agents the loop *change → look → check* for Spec2/Morphic now (Bloc/Toplo are the same idea). For web UIs use `stlive open-ui http://localhost:8080` (a chromeless Chrome/Edge window). Details: [docs/architecture.md](docs/architecture.md#gui-mode-and-the-ui-process).
 
+Four ways to ship a Pharo app with a window (Spec2/Morphic, a web UI in a Chrome app window, a native `.app` with the system webview, Spec2 with GTK4), all built with stlive: [paulwilke/stlive-examples](https://github.com/paulwilke/stlive-examples).
+
 ## Install
 
 Requirements: macOS or Linux (x86-64/arm64 where Pharo 13 VMs exist), `curl`, `unzip`, a [Rust toolchain](https://rustup.rs) to build, and `jq` for the examples.
 
 ```bash
-cargo install --git https://github.com/paulwilke/smalltalk-live-cli   # or: cargo build --release
+cargo install --git https://github.com/paulwilke/stlive   # or: cargo build --release
 stlive init        # one time: downloads Pharo 13 (~100 MB) and builds an image containing the server
 ```
 
