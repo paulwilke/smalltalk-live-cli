@@ -53,15 +53,63 @@ fn sym(s: &str, symbol_style: bool) -> String {
     }
 }
 
-/// Selector of the method whose first source line (the pattern) is `pattern`.
+/// Selector of a message pattern: `add: x` -> `add:`, `at: i put: v` -> `at:put:`, `+ other` -> `+`, `one` -> `one`.
 fn selector_of_pattern(pattern: &str) -> String {
     let toks: Vec<&str> = pattern.split_whitespace().collect();
     match toks.first() {
         None => String::new(),
         Some(t) if t.ends_with(':') => toks.iter().step_by(2).cloned().collect::<String>(),
-        Some(t) if toks.len() == 2 && !t.chars().next().unwrap().is_alphanumeric() && *t != "_" => t.to_string(),
         Some(t) => t.to_string(),
     }
+}
+
+/// A Tonel method header line: `Class >> pattern [` or `Class >> pattern [ body text` (body on the header line).
+struct Header<'a> {
+    class_header: &'a str,
+    /// The message pattern: the text before the first `[` (a pattern never contains one), trimmed.
+    pattern: &'a str,
+    /// The text after that `[`, trimmed: the first body text when the body starts on the header line.
+    tail: &'a str,
+}
+
+fn parse_header(line: &str) -> Option<Header<'_>> {
+    let (class_header, rest) = line.trim_end().split_once(" >> ")?;
+    // the body opens at the first `[`; the body text after it may contain more of them
+    let (pattern, tail) = match rest.find('[') {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, ""),
+    };
+    Some(Header { class_header, pattern: pattern.trim(), tail: tail.trim() })
+}
+
+/// The image's `canonicalSourceOf:` (smalltalk/src/StLive/StLiveCommands.class.st). `raw` is the method source
+/// with the pattern first; `pattern` is the message pattern the image builds from the selector and argument names
+/// (single spaces). A body written on the pattern's line moves below the pattern, indented by one tab.
+fn canonical_source(pattern: &str, raw: &str) -> String {
+    let rest = match raw.strip_prefix(pattern) {
+        Some(r) => r,
+        None => return raw.to_string(),
+    };
+    if rest.is_empty() || rest.starts_with('\n') {
+        return raw.to_string();
+    }
+    format!("{}\n\t{}", pattern, rest.trim())
+}
+
+/// Source of a parsed Tonel method as the image's `canonicalSourceOf:` gives it: the pattern, then the text after
+/// the header's `[` and the body lines (the closing `]` line excluded).
+fn method_source(h: &Header, body: &[&str]) -> String {
+    let pattern = h.pattern.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut raw = h.pattern.to_string();
+    if !h.tail.is_empty() {
+        raw.push(' ');
+        raw.push_str(h.tail);
+    }
+    for l in body {
+        raw.push('\n');
+        raw.push_str(l);
+    }
+    canonical_source(&pattern, &raw)
 }
 
 struct Block {
@@ -85,11 +133,8 @@ fn method_blocks(text: &str) -> Vec<Block> {
     }
     for (n, (li, off)) in starts.iter().enumerate() {
         let end = if n + 1 < starts.len() { starts[n + 1].1 } else { text.len() };
-        if let Some(next) = lines.get(li + 1) {
-            if let Some((head, rest)) = next.split_once(" >> ") {
-                let pattern = rest.trim_end().trim_end_matches('[').trim();
-                blocks.push(Block { start: *off, end, class_header: head.to_string(), selector: selector_of_pattern(pattern) });
-            }
+        if let Some(h) = lines.get(li + 1).and_then(|next| parse_header(next)) {
+            blocks.push(Block { start: *off, end, class_header: h.class_header.to_string(), selector: selector_of_pattern(h.pattern) });
         }
     }
     blocks
@@ -454,15 +499,15 @@ pub fn parse_methods(text: &str) -> Vec<FileMethod> {
         let block = &text[b.start..b.end];
         let lines: Vec<&str> = block.lines().collect();
         if lines.len() < 3 { continue; }
-        let head = lines[1];
-        let pattern = head.split_once(" >> ").map(|(_, r)| r.trim_end().trim_end_matches('[').trim()).unwrap_or("");
+        let h = match parse_header(lines[1]) {
+            Some(h) => h,
+            None => continue,
+        };
         // body: everything after the header line up to the closing "]" line
         let mut body: Vec<&str> = lines[2..].to_vec();
         while body.last().map(|l| l.trim().is_empty()).unwrap_or(false) { body.pop(); }
         if body.last().map(|l| l.trim() == "]").unwrap_or(false) { body.pop(); }
-        let mut source = pattern.to_string();
-        for l in body { source.push('\n'); source.push_str(l); }
-        out.push(FileMethod { class_header: b.class_header.clone(), selector: b.selector.clone(), source: normalise(&source) });
+        out.push(FileMethod { class_header: b.class_header.clone(), selector: b.selector.clone(), source: normalise(&method_source(&h, &body)) });
     }
     out
 }
@@ -658,6 +703,68 @@ mod tests {
         leaked["methods"].as_array_mut().unwrap().push(json!({"class": "Bar", "side": "instance", "selector": "hello", "source": "hello\n\t^ 1"}));
         let r = drift(&leaked, "Pkg", &dir);
         assert_eq!(r["missing_in_files"], json!(["Bar>>hello"]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Methods whose body starts on the header line: unary, keyword (one and two keywords), binary, a pragma,
+    /// and a body with a `[` of its own on the header line.
+    const HEADER_LINE_FILE: &str = "{ #category : 'x' }\nDemoA >> one [ ^ 1\n]\n\n{ #category : 'x' }\nDemoA >> add: x [ ^ x + 1\n]\n\n{ #category : 'x' }\nDemoA >> at: i put: v [ ^ v\n]\n\n{ #category : 'x' }\nDemoA >> + other [ ^ other\n]\n\n{ #category : 'x' }\nDemoA >> three [ ^ [ 3 ] value\n]\n\n{ #category : 'baselines' }\nBaselineOfDemo >> baseline: spec [ <baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]\n]\n";
+
+    #[test]
+    fn header_line_bodies_parse_like_the_image_canonical_source() {
+        let ms = parse_methods(HEADER_LINE_FILE);
+        let got: Vec<(&str, &str)> = ms.iter().map(|m| (m.selector.as_str(), m.source.as_str())).collect();
+        assert_eq!(got, vec![
+            ("one", "one\n\t^ 1"),
+            ("add:", "add: x\n\t^ x + 1"),
+            ("at:put:", "at: i put: v\n\t^ v"),
+            ("+", "+ other\n\t^ other"),
+            ("three", "three\n\t^ [ 3 ] value"),
+            ("baseline:", "baseline: spec\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]"),
+        ]);
+        assert_eq!(ms[4].class_header, "DemoA");
+        assert_eq!(ms[5].class_header, "BaselineOfDemo");
+        // the standard layout (header alone on its line) gives the same canonical text as before
+        let standard = "{ #category : 'baselines' }\nBaselineOfDemo >> baseline: spec [\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]\n]\n";
+        assert_eq!(parse_methods(standard)[0].source, "baseline: spec\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]");
+        // the selector is taken from the pattern alone, never from body text
+        assert_eq!(method_blocks(HEADER_LINE_FILE).iter().map(|b| b.selector.as_str()).collect::<Vec<_>>(), vec!["one", "add:", "at:put:", "+", "three", "baseline:"]);
+    }
+
+    #[test]
+    fn drift_is_clean_for_header_line_bodies() {
+        let dir = tmp("header-line-drift");
+        fs::write(dir.join("Pkg/BaselineOfDemo.class.st"), "Class {\n\t#name : 'BaselineOfDemo',\n\t#superclass : 'Object',\n\t#package : 'Pkg'\n}\n\n{ #category : 'baselines' }\nBaselineOfDemo >> baseline: spec [ <baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]\n]\n\n{ #category : 'x' }\nBaselineOfDemo >> one [ ^ 1\n]\n").unwrap();
+        // the image's normalizedSourceOf: for the same methods
+        let image = json!({"classes": ["BaselineOfDemo"], "methods": [
+            {"class": "BaselineOfDemo", "side": "instance", "selector": "baseline:", "source": "baseline: spec\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]"},
+            {"class": "BaselineOfDemo", "side": "instance", "selector": "one", "source": "one\n\t^ 1"}]});
+        let r = drift(&image, "Pkg", &dir);
+        assert_eq!(r["ok"], json!(true), "{}", r);
+        assert_eq!(r["missing_in_files"], json!([]));
+        assert_eq!(r["different"], json!([]));
+        // a real change in the body is still reported
+        let mut changed = image.clone();
+        changed["methods"][1]["source"] = json!("one\n\t^ 2");
+        assert_eq!(drift(&changed, "Pkg", &dir)["different"], json!(["BaselineOfDemo>>one"]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saving_replaces_header_line_methods_in_place() {
+        let dir = tmp("header-line-save");
+        let file = "{ #category : 'x' }\nDemoA >> add: x [ ^ x + 1\n]\n\n{ #category : 'baselines' }\nDemoA >> baseline: spec [ <baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Demo' ]\n]\n";
+        fs::write(dir.join("Pkg/DemoA.class.st"), file).unwrap();
+        let changes = vec![
+            json!({"index": 1, "kind": "method-compile", "class_name": "DemoA", "class_package": "Pkg", "package": "Pkg", "side": "instance", "selector": "add:", "protocol": "x", "new_source": "add: x\n\t^ x + 2"}),
+            json!({"index": 2, "kind": "method-compile", "class_name": "DemoA", "class_package": "Pkg", "package": "Pkg", "side": "instance", "selector": "baseline:", "protocol": "baselines", "new_source": "baseline: spec\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Other' ]"}),
+        ];
+        let p = plan(&changes, "Pkg", &dir, false).unwrap();
+        assert_eq!(p.report[0]["added"], json!([]));
+        assert_eq!(p.report[0]["replaced"], json!(["DemoA>>add:", "DemoA>>baseline:"]));
+        let text = fs::read_to_string(dir.join("Pkg/DemoA.class.st")).unwrap();
+        assert_eq!(text, "{ #category : 'x' }\nDemoA >> add: x [\n\t^ x + 2\n]\n\n{ #category : 'baselines' }\nDemoA >> baseline: spec [\n\t<baseline>\n\tspec for: #common do: [\n\t\tspec package: 'Other' ]\n]\n");
+        assert_eq!(text.matches(" >> baseline:").count(), 1);
         let _ = fs::remove_dir_all(&dir);
     }
 }
