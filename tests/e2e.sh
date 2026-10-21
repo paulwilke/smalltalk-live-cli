@@ -280,6 +280,68 @@ sed -i.bak 's/\^ 10$/^ 20/' ldep/LoadDep/LoadDepThing.class.st
 $S load LoadDemo --repository "tonel://$WORK/lsrc" >/dev/null
 out=$($S eval 'LoadDepThing new answer'); check "dependency package changes arrive through the top-level baseline" '.result.value.print' 20
 
+# --- 0.7.1: packages the baseline dropped (stale), groups that do not re-apply a package, load --prune
+mkdir -p psrc/BaselineOfPrune psrc/PruneCore psrc/PruneGone psrc/PruneDirty psrc/PruneTests
+for p in BaselineOfPrune PruneCore PruneGone PruneDirty PruneTests; do printf "Package { #name : '%s' }\n" $p > psrc/$p/package.st; done
+for c in PruneCore:PruneCoreThing PruneGone:PruneGoneThing PruneDirty:PruneDirtyThing PruneTests:PruneTestsThing; do
+  printf "Class {\n\t#name : '%s',\n\t#superclass : 'Object',\n\t#package : '%s'\n}\n" "${c#*:}" "${c%%:*}" > "psrc/${c%%:*}/${c#*:}.class.st"; done
+cat > psrc/BaselineOfPrune/BaselineOfPrune.class.st <<'ST'
+Class {
+	#name : 'BaselineOfPrune',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfPrune'
+}
+
+{ #category : 'baselines' }
+BaselineOfPrune >> baseline: spec [
+	<baseline>
+	spec for: #common do: [
+		spec package: 'PruneCore'.
+		spec package: 'PruneGone'.
+		spec package: 'PruneDirty'.
+		spec package: 'PruneTests' ].
+	spec group: 'default' with: #('PruneCore' 'PruneGone' 'PruneDirty').
+	spec group: 'Tests' with: #('default' 'PruneTests')
+]
+ST
+out=$($S load Prune --repository "tonel://$WORK/psrc" --group Tests); check "load with the Tests group loads every package" '.result.loaded.new_package_count' 5
+$S method compile PruneDirtyThing --protocol t - <<< $'dirty\n\t^ 99' >/dev/null
+# the baseline drops two packages and their folders are deleted; PruneDirty has unsaved changes in the image
+cat > psrc/BaselineOfPrune/BaselineOfPrune.class.st <<'ST'
+Class {
+	#name : 'BaselineOfPrune',
+	#superclass : 'BaselineOf',
+	#package : 'BaselineOfPrune'
+}
+
+{ #category : 'baselines' }
+BaselineOfPrune >> baseline: spec [
+	<baseline>
+	spec for: #common do: [
+		spec package: 'PruneCore'.
+		spec package: 'PruneTests' ].
+	spec group: 'default' with: #('PruneCore').
+	spec group: 'Tests' with: #('default' 'PruneTests')
+]
+ST
+rm -rf psrc/PruneGone psrc/PruneDirty
+out=$($S load Prune --repository "tonel://$WORK/psrc"); check "a package the baseline dropped is reported as stale" '.result.loaded.stale_packages|join(",")' 'PruneDirty,PruneGone'
+check "a package of another group is reported as not reloaded" '.result.loaded.not_reloaded_packages[0].package' PruneTests
+check "the not-reloaded hint names the group that loads it" '.result.loaded.not_reloaded_packages[0].hint' 'load again with --group Tests'
+check "nothing is pruned without --prune" '.result.loaded.pruned_packages|length' 0
+out=$($S eval 'Smalltalk globals includesKey: #PruneGoneThing'); check "stale class still exists without --prune" '.result.value.print' true
+TOTAL=$($S changes list | jq -r .result.total)
+out=$($S load Prune --repository "tonel://$WORK/psrc" --prune); check "--prune unloads the stale package without unsaved changes" '.result.loaded.pruned_packages|join(",")' PruneGone
+check "a stale package with unsaved changes is skipped and says why" '[.result.loaded.prune_skipped[]|select(.package=="PruneDirty")|.reason|contains("unsaved")]|join(",")' true
+out=$($S eval 'Smalltalk globals includesKey: #PruneGoneThing'); check "pruned class is gone" '.result.value.print' false
+out=$($S eval 'Smalltalk globals includesKey: #PruneDirtyThing'); check "skipped stale class still exists" '.result.value.print' true
+out=$($S changes list); check "pruning is not recorded as changes" '.result.total' "$TOTAL"
+rm -rf pdrift; cp -r psrc pdrift; rm -rf pdrift/PruneTests
+out=$($S drift --all --dir psrc); check "drift --all: every listed package has its folder" '.result.packages_missing_in_files|length' 0
+out=$($S drift --all --dir pdrift); check "drift --all reports a loaded package whose folder is missing" '.result.packages_missing_in_files[0].package' PruneTests
+check "the missing folder is attributed to its baseline" '.result.packages_missing_in_files[0].listed_by|join(",")' BaselineOfPrune
+$S drift --all --dir pdrift >/dev/null; [ $? -eq 1 ] && { pass=$((pass+1)); echo "ok   - drift --all exits 1 for a missing folder"; } || { fail=$((fail+1)); echo "FAIL - drift --all missing folder exit code"; }
+
 # --- 0.7: an unhandled error in a forked process no longer ends the headless image
 out=$($S eval '[ 1 / 0 ] fork. (Delay forMilliseconds: 300) wait. 7'); check "forked error: eval still answers" '.result.value.print' 7
 out=$($S ping); check "image survives the forked error" '.result.pong'

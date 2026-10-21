@@ -30,7 +30,7 @@ Commands:
   save       Write changes made through this CLI back to Tonel files (minimal per-method diffs)
   run        One-shot headless run of a program from Tonel sources in a FRESH image; stdout carries only the program's result
   drift      Compare the image with the Tonel files of a package: methods or classes that exist only on one side, or differ
-  load       Load a Metacello baseline; reports the packages that appeared
+  load       Load a Metacello baseline; reports the packages that appeared, stale_packages (dropped by the baseline, still loaded) and not_reloaded_packages (loaded, but outside the requested groups)
   raw        Send a raw command: stlive raw debug.frames session=dbg-1 limit=3
   help       Print this message or the help of the given subcommand(s)
 
@@ -121,7 +121,7 @@ Usage: stlive drift [OPTIONS] --dir <DIR>
 Options:
   -i, --instance <INSTANCE>    Instance name (several images can run side by side) [env: STLIVE_INSTANCE=] [default: default]
       --package <PACKAGE>      Package to compare (or --all for every package folder in --dir that is loaded in the image)
-      --all                    
+      --all                    Every package folder in --dir; also the packages the BaselineOf* folders in --dir list that are loaded without a folder (packages_missing_in_files)
       --state-dir <STATE_DIR>  Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --dir <DIR>              Source directory with one folder per package
       --pretty                 Pretty-print JSON
@@ -1318,7 +1318,7 @@ Options:
 ## `stlive load`
 
 ```
-Load a Metacello baseline; reports the packages that appeared
+Load a Metacello baseline; reports the packages that appeared, stale_packages (dropped by the baseline, still loaded) and not_reloaded_packages (loaded, but outside the requested groups)
 
 Usage: stlive load [OPTIONS] --repository <REPOSITORY> <BASELINE>
 
@@ -1331,8 +1331,9 @@ Options:
       --group <GROUPS>           Groups to load (repeatable); default group if none
       --state-dir <STATE_DIR>    Directory holding instance state (port file, pid, log, config) [env: STLIVE_DIR=]
       --pretty                   Pretty-print JSON
-      --timeout <TIMEOUT>        
+      --prune                    Also unload the stale packages; ones with unsaved changes or listed by another loaded baseline are kept (prune_skipped)
       --log <LOG>                Append one JSON line per call (time, command, duration, output size, ok, key result fields) to this file [env: STLIVE_LOG=]
+      --timeout <TIMEOUT>        
       --tag <TAG>                Free-form marker written to the call log (scene, task, ...) [env: STLIVE_TAG=]
       --text                     Human-readable indented text instead of JSON (exit codes are unchanged)
   -h, --help                     Print help

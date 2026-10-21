@@ -200,13 +200,14 @@ enum Cmd {
         /// Package to compare (or --all for every package folder in --dir that is loaded in the image)
         #[arg(long)]
         package: Option<String>,
+        /// Every package folder in --dir; also the packages the BaselineOf* folders in --dir list that are loaded without a folder (packages_missing_in_files)
         #[arg(long)]
         all: bool,
         /// Source directory with one folder per package
         #[arg(long)]
         dir: PathBuf,
     },
-    /// Load a Metacello baseline; reports the packages that appeared
+    /// Load a Metacello baseline; reports the packages that appeared, stale_packages (dropped by the baseline, still loaded) and not_reloaded_packages (loaded, but outside the requested groups)
     Load {
         /// Baseline name without the BaselineOf prefix, e.g. Mapless
         baseline: String,
@@ -216,6 +217,9 @@ enum Cmd {
         /// Groups to load (repeatable); default group if none
         #[arg(long = "group")]
         groups: Vec<String>,
+        /// Also unload the stale packages; ones with unsaved changes or listed by another loaded baseline are kept (prune_skipped)
+        #[arg(long)]
+        prune: bool,
         #[arg(long)]
         timeout: Option<u64>,
     },
@@ -1233,11 +1237,14 @@ fn main() {
         Cmd::Save { package, all, dir, dry_run, verify } => return save_changes(&inst, package, all, &dir, dry_run, verify, pretty),
         Cmd::Run { load, packages, prepare, eval, file, timeout, keep, args } => return run_program(&inst, load, packages, prepare, eval, file, timeout, keep, args, pretty),
         Cmd::Drift { package, all, dir } => return drift_cmd(&inst, package, all, &dir, pretty),
-        Cmd::Load { baseline, repository, groups, timeout } => {
+        Cmd::Load { baseline, repository, groups, prune, timeout } => {
             let mut m = Map::new();
             m.insert("name".into(), baseline.into());
             m.insert("repository".into(), repository.into());
             m.insert("groups".into(), json!(groups));
+            if prune {
+                m.insert("prune".into(), true.into());
+            }
             opt(&mut m, "timeout", timeout);
             ("load.baseline".into(), Value::Object(m), Some(timeout.unwrap_or(600_000)))
         }
@@ -1275,6 +1282,48 @@ mod tests {
         let old = json!({"ok": true, "result": {"ran": 3, "passed": 3, "failed": 0}});
         assert_eq!(exit_code_with(&old, true), 0);
         assert_eq!(exit_code_with(&json!({"ok": false, "error": {}}), false), 1);
+    }
+
+    #[test]
+    fn baseline_source_lists_its_packages_in_every_group() {
+        let src = "Class {\n\t#name : 'BaselineOfDemo',\n\t#package : 'BaselineOfDemo'\n}\n\
+            BaselineOfDemo >> baseline: spec [\n\t<baseline>\n\tspec for: #common do: [\n\
+            \t\tspec package: 'Demo'.\n\t\tspec package: 'Demo-Tests' with: [ spec requires: #('Demo') ] ].\n\
+            \tspec group: 'default' with: #('Demo').\n\tspec subpackage: 'NotMine'\n]\n";
+        // group lines, #package : (Tonel class and package keys) and `subpackage:` are not package lists
+        assert_eq!(baseline_listed_packages(src), vec!["Demo".to_string(), "Demo-Tests".to_string()]);
+        assert_eq!(baseline_listed_packages("spec package:'Tight'"), vec!["Tight".to_string()]);
+        assert!(baseline_listed_packages("spec packages: #('A' 'B')").is_empty());
+    }
+
+    #[test]
+    fn a_listed_loaded_package_without_folder_is_missing() {
+        let mut listed: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        listed.insert("Demo".into(), vec!["BaselineOfDemo".into()]);
+        listed.insert("Demo-Tests".into(), vec!["BaselineOfDemo".into()]);
+        listed.insert("Gone".into(), vec!["BaselineOfDemo".into(), "BaselineOfOther".into()]);
+        listed.insert("NotLoaded".into(), vec!["BaselineOfDemo".into()]);
+        let folders = vec!["Demo".to_string(), "Demo-Tests".to_string()];
+        let loaded = vec!["Demo".to_string(), "Gone".to_string()];
+        let missing = missing_in_files(&listed, &folders, &loaded);
+        assert_eq!(missing, vec![json!({"package": "Gone", "listed_by": ["BaselineOfDemo", "BaselineOfOther"]})]);
+        // with the folder present nothing is missing; nothing loaded means nothing to report
+        assert!(missing_in_files(&listed, &["Gone".to_string()], &[]).is_empty());
+    }
+
+    #[test]
+    fn baseline_folders_are_read_from_disk() {
+        let dir = std::env::temp_dir().join(format!("stlive-baselines-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("BaselineOfX")).unwrap();
+        std::fs::create_dir_all(dir.join("X")).unwrap();
+        std::fs::write(dir.join("BaselineOfX/BaselineOfX.class.st"), "spec package: 'X'.\nspec package: 'X-Gone'.\n").unwrap();
+        std::fs::write(dir.join("X/X.class.st"), "package: 'Not a baseline'").unwrap();
+        let listed = baseline_listed_packages_in(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(listed.get("X-Gone"), Some(&vec!["BaselineOfX".to_string()]));
+        assert_eq!(listed.get("X").map(|v| v.len()), Some(1));
+        assert!(!listed.contains_key("Not a baseline"));
     }
 }
 
@@ -1382,6 +1431,81 @@ fn verify_packages(inst: &Instance, packages: &[String], dir: &Path, pretty: boo
         .collect()
 }
 
+/// Package name -> the BaselineOf* folders in `dir` whose baseline lists it (`spec package: '<name>'`).
+fn baseline_listed_packages_in(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut listed_by: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut folders: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect(),
+        Err(_) => return listed_by,
+    };
+    folders.sort();
+    for folder in folders {
+        let name = folder.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if !name.starts_with("BaselineOf") {
+            continue;
+        }
+        let mut listed: std::collections::BTreeSet<String> = Default::default();
+        if let Ok(rd) = std::fs::read_dir(&folder) {
+            for f in rd.flatten().filter(|f| f.file_name().to_string_lossy().ends_with(".st")) {
+                if let Ok(text) = std::fs::read_to_string(f.path()) {
+                    listed.extend(baseline_listed_packages(&text));
+                }
+            }
+        }
+        for p in listed {
+            listed_by.entry(p).or_default().push(name.clone());
+        }
+    }
+    listed_by
+}
+
+/// Package names a BaselineOf source lists with `package: '<name>'`, wherever it appears (e.g. inside `spec for: #common do: [ ... ]`).
+fn baseline_listed_packages(source: &str) -> Vec<String> {
+    const KEY: &str = "package:";
+    let mut names = Vec::new();
+    let mut rest = source;
+    while let Some(i) = rest.find(KEY) {
+        let head = &rest[..i];
+        let tail = &rest[i + KEY.len()..];
+        let word_start = head.chars().last().map_or(true, |c| !(c.is_alphanumeric() || c == '_'));
+        if word_start {
+            if let Some(quoted) = tail.trim_start().strip_prefix('\'') {
+                if let Some(end) = quoted.find('\'') {
+                    names.push(quoted[..end].to_string());
+                }
+            }
+        }
+        rest = tail;
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Packages the baselines list that are loaded in the image but have no folder in `dir`, as
+/// `{package, listed_by}` sorted by name. Pure: the caller supplies both sides.
+fn missing_in_files(listed_by: &std::collections::BTreeMap<String, Vec<String>>, folders: &[String], loaded: &[String]) -> Vec<Value> {
+    listed_by
+        .iter()
+        .filter(|(p, _)| !folders.iter().any(|f| f == *p) && loaded.iter().any(|l| l == *p))
+        .map(|(p, by)| json!({"package": p, "listed_by": by}))
+        .collect()
+}
+
+fn packages_missing_in_files(inst: &Instance, dir: &Path, pretty: bool) -> Vec<Value> {
+    let listed_by = baseline_listed_packages_in(dir);
+    let folders = package_folders(dir);
+    if listed_by.keys().all(|p| folders.contains(p)) {
+        return Vec::new();
+    }
+    let info = call(inst, "image.info", json!({}), Duration::from_secs(120), pretty);
+    let loaded: Vec<String> = info["result"]["loaded_packages"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    missing_in_files(&listed_by, &folders, &loaded)
+}
+
 fn drift_cmd(inst: &Instance, package: Option<String>, all: bool, dir: &Path, pretty: bool) {
     let packages = match (package, all) {
         (Some(p), false) => vec![p],
@@ -1389,8 +1513,14 @@ fn drift_cmd(inst: &Instance, package: Option<String>, all: bool, dir: &Path, pr
         _ => die(2, "missing_argument", "Give --package <Name> or --all.".into(), pretty),
     };
     let reports = verify_packages(inst, &packages, dir, pretty);
-    let ok = reports.iter().all(|r| r["ok"] == json!(true));
-    emit(&json!({"ok": ok, "result": {"drift": !ok, "packages": reports}}), pretty);
+    // --all also checks the packages the baselines in dir list: loaded without a folder is drift too
+    let missing = if all { packages_missing_in_files(inst, dir, pretty) } else { Vec::new() };
+    let ok = reports.iter().all(|r| r["ok"] == json!(true)) && missing.is_empty();
+    let mut result = json!({"drift": !ok, "packages": reports});
+    if all {
+        result["packages_missing_in_files"] = json!(missing);
+    }
+    emit(&json!({"ok": ok, "result": result}), pretty);
     if !ok { std::process::exit(1); }
 }
 

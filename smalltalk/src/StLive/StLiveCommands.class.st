@@ -6,7 +6,8 @@ Class {
 	#name : 'StLiveCommands',
 	#superclass : 'Object',
 	#instVars : [
-		'server'
+		'server',
+		'baselineRecords'
 	],
 	#package : 'StLive'
 }
@@ -408,22 +409,153 @@ StLiveCommands >> supersedeChangesOf: packageNames [
 	^ n
 ]
 
+{ #category : 'baselines' }
+StLiveCommands >> baselineRecords [
+	"Baseline name -> package names that baseline was known to have after its last load (see knownBaselinePackagesOf:)."
+	^ baselineRecords ifNil: [ baselineRecords := Dictionary new ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> versionOfBaselineClass: aClass [
+	^ [ aClass version ] on: Error do: [ :e | nil ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> baselineVersionOf: name [
+	"The version BaselineOf<name> in the image describes now (its packages and groups), or nil."
+	^ (Smalltalk globals at: ('BaselineOf' , name) asSymbol ifAbsent: [ nil ]) ifNotNil: [ :c | self versionOfBaselineClass: c ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> packageNamesOfVersion: version [
+	^ version isNil
+		ifTrue: [ #() ]
+		ifFalse: [ [ (version packages collect: [ :p | p name asString ]) asArray ] on: Error do: [ :e | #() ] ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> groupMembershipsOf: version [
+	"Group name -> set of the package names Metacello loads for that group (groups that include groups are expanded)."
+	| memberships |
+	memberships := OrderedDictionary new.
+	version ifNotNil: [
+		[ version groups do: [ :g |
+			memberships at: g name asString put: ((version packagesForSpecNamed: g name) collect: [ :p | p name asString ]) asSet ] ]
+			on: Error do: [ :e | nil ] ].
+	^ memberships
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> packagesLoadedForGroups: groupNames version: version [
+	"What Metacello loads for these groups (the default group when none): their packages and, transitively, the packages those require."
+	| names todo |
+	names := Set new.
+	todo := OrderedCollection new.
+	version ifNil: [ ^ names ].
+	(groupNames isEmpty ifTrue: [ #( 'default' ) ] ifFalse: [ groupNames ]) do: [ :g |
+		todo addAll: ([ (version packagesForSpecNamed: g) collect: [ :p | p name asString ] ] on: Error do: [ #() ]) ].
+	[ todo isEmpty ] whileFalse: [
+		| n required |
+		n := todo removeFirst.
+		(names includes: n) ifFalse: [
+			names add: n.
+			required := [ (version packageNamed: n ifAbsent: [ nil ]) ifNil: [ #() ] ifNotNil: [ :spec | spec requires ] ] on: Error do: [ #() ].
+			todo addAll: ((required ifNil: [ #() ]) collect: [ :r | r asString ]) ] ].
+	^ names
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> isPackageLoaded: aName [
+	^ (PackageOrganizer default packageNamed: aName ifAbsent: [ nil ]) notNil
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> knownBaselinePackagesOf: name [
+	"Packages that were part of baseline <name>: as its last load left them, so a package the baseline dropped stays known until it is pruned; else as the BaselineOf in the image lists them."
+	^ self baselineRecords at: name ifAbsent: [ self packageNamesOfVersion: (self baselineVersionOf: name) ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> stalePackagesOf: known current: current [
+	"Packages that were part of the baseline, are still loaded, and are no longer listed by it."
+	^ ((known reject: [ :n | current includes: n ]) select: [ :n | self isPackageLoaded: n ]) asSet asSortedCollection asArray
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> notReloadedPackagesOf: current requested: requested memberships: memberships [
+	"Loaded packages of the baseline that the requested groups do not load: their files were not applied."
+	^ (current select: [ :n | (requested includes: n) not and: [ self isPackageLoaded: n ] ]) collect: [ :n |
+		| groups |
+		groups := (memberships keys select: [ :g | (memberships at: g) includes: n ]) asSortedCollection asArray.
+		self m: {
+			'package' -> n.
+			'hint' -> (groups isEmpty
+				ifTrue: [ 'no group of this baseline lists it' ]
+				ifFalse: [ 'load again with' , (groups inject: '' into: [ :acc :g | acc , ' --group ' , g ]) ]) } ]
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> packagesListedByOtherBaselinesThan: name [
+	| names own |
+	names := Set new.
+	own := 'BaselineOf' , name.
+	BaselineOf allSubclasses do: [ :c |
+		c name asString = own ifFalse: [ names addAll: (self packageNamesOfVersion: (self versionOfBaselineClass: c)) ] ].
+	^ names
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> pruneStalePackages: stale others: others [
+	"Unloads the stale packages that have no unsaved changes and that no other baseline in the image lists.
+	Answers { unloaded. skipped }. Unloading is not recorded as changes."
+	| unloaded skipped |
+	unloaded := OrderedCollection new.
+	skipped := OrderedCollection new.
+	stale do: [ :n |
+		| unsaved reason |
+		unsaved := (self changesByPackage at: n ifAbsent: [ nil ]) ifNil: [ 0 ] ifNotNil: [ :e | e at: 'unsaved' ].
+		reason := unsaved > 0
+			ifTrue: [ unsaved printString , ' unsaved change(s) recorded for this package' ]
+			ifFalse: [ (others includes: n) ifTrue: [ 'still listed by another baseline in the image' ] ifFalse: [ nil ] ].
+		reason isNil
+			ifTrue: [
+				[ server suppressRecordingDuring: [ (MCWorkingCopy forPackageNamed: n) unload ].
+				unloaded add: n ]
+					on: Error
+					do: [ :e | skipped add: (self m: { 'package' -> n. 'reason' -> ('unload failed: ' , (e messageText ifNil: [ e class name ]) asString) }) ] ]
+			ifFalse: [ skipped add: (self m: { 'package' -> n. 'reason' -> reason }) ] ].
+	^ { unloaded asArray. skipped asArray }
+]
+
+{ #category : 'baselines' }
+StLiveCommands >> rememberBaselinePackages: name known: known current: current unloaded: unloaded [
+	| remembered |
+	remembered := known asSet.
+	remembered addAll: current.
+	unloaded do: [ :n | remembered remove: n ifAbsent: [ nil ] ].
+	self baselineRecords at: name put: ((remembered select: [ :n | (current includes: n) or: [ self isPackageLoaded: n ] ]) asSortedCollection asArray)
+]
+
 { #category : 'runtime' }
 StLiveCommands >> cmdLoadBaseline: args [
 	"Load a Metacello baseline (in a job: failures become debug sessions) and report what changed. Re-loading
 	updates packages that are already in the image, including ones with unsaved changes made in the image
-	(Monticello's merge-or-load question is answered with `load`: the files win) and the baseline itself."
-	| name repository groups before timeout holder response warnings overwritten |
+	(Monticello's merge-or-load question is answered with `load`: the files win) and the baseline itself.
+	Packages that left the baseline are reported as stale (and unloaded with prune: true); loaded packages of
+	the baseline that the requested groups do not contain are reported as not reloaded."
+	| name repository groups before timeout holder response warnings overwritten prune known |
 	warnings := Bag new.
 	overwritten := Set new.
 	name := self need: 'name' in: args.
 	repository := self need: 'repository' in: args.
 	groups := (args at: 'groups' ifAbsent: [ #() ]) asArray.
 	timeout := self int: 'timeout' in: args default: 600000.
+	prune := (args at: 'prune' ifAbsent: [ false ]) == true.
+	known := self knownBaselinePackagesOf: name.
 	before := (PackageOrganizer default packages collect: [ :p | p name ]) asSet.
 	response := self
 		runBlock: [
-			| loader added refreshed superseded |
+			| loader added refreshed superseded version current memberships requested stale notReloaded pruned |
 			loader := Metacello new baseline: name; repository: repository; yourself.
 			[ server suppressRecordingDuring: [
 				[ refreshed := self refreshBaselinePackage: name repository: repository.
@@ -436,6 +568,16 @@ StLiveCommands >> cmdLoadBaseline: args [
 				do: [ :w | warnings add: ([ w messageText asString ] on: Error do: [ :x | w class name ]). w resume ].
 			superseded := self supersedeChangesOf: overwritten.
 			added := ((PackageOrganizer default packages collect: [ :p | p name ]) asSet difference: before) asSortedCollection asArray.
+			version := self baselineVersionOf: name.
+			current := self packageNamesOfVersion: version.
+			memberships := self groupMembershipsOf: version.
+			requested := self packagesLoadedForGroups: groups version: version.
+			stale := self stalePackagesOf: known current: current.
+			notReloaded := self notReloadedPackagesOf: current requested: requested memberships: memberships.
+			pruned := prune
+				ifTrue: [ self pruneStalePackages: stale others: (self packagesListedByOtherBaselinesThan: name) ]
+				ifFalse: [ { #(). #() } ].
+			self rememberBaselinePackages: name known: known current: current unloaded: pruned first.
 			holder := self m: {
 				'new_package_count' -> added size.
 				'new_packages' -> (added first: (15 min: added size)).
@@ -445,6 +587,10 @@ StLiveCommands >> cmdLoadBaseline: args [
 				'baseline_package' -> refreshed.
 				'modified_packages_overwritten' -> overwritten asSortedCollection asArray.
 				'changes_superseded' -> superseded.
+				'stale_packages' -> stale.
+				'not_reloaded_packages' -> notReloaded.
+				'pruned_packages' -> pruned first.
+				'prune_skipped' -> pruned second.
 				'warnings' -> (warnings asSet asArray collect: [ :w | self m: { 'message' -> w. 'count' -> (warnings occurrencesOf: w) } ]) }.
 			true ]
 		origin: (self originCmd: 'load.baseline' args: args)
