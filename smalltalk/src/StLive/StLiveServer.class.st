@@ -431,7 +431,8 @@ StLiveServer >> subscribeToSystemChanges [
 		when: MethodModified send: #methodChanged: to: self;
 		when: MethodRemoved send: #methodRemoved: to: self;
 		when: ClassAdded send: #classChanged: to: self;
-		when: ClassModifiedClassDefinition send: #classChanged: to: self
+		when: ClassModifiedClassDefinition send: #classChanged: to: self;
+		when: ClassCommented send: #classChanged: to: self
 ]
 
 { #category : 'recording' }

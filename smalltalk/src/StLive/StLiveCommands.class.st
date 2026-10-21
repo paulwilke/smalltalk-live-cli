@@ -836,7 +836,13 @@ StLiveCommands >> classChangeEntry: cls origin: origin [
 		'instance_variables' -> cls instVarNames asArray.
 		'class_instance_variables' -> cls class instVarNames asArray.
 		'class_variables' -> cls classVarNames asArray.
-		'comment' -> ([ cls comment ] on: Error do: [ :e | nil ]) }
+		'comment' -> (self commentOf: cls) }
+]
+
+{ #category : 'code' }
+StLiveCommands >> commentOf: cls [
+	"The class comment as the change log records it. Nil when it cannot be read: save then leaves the file's comment alone."
+	^ [ (cls comment ifNil: [ '' ]) asString ] on: Error do: [ :e | nil ]
 ]
 
 { #category : 'code' }
@@ -877,7 +883,7 @@ StLiveCommands >> cmdClassCreate: args [
 		'instance_variables' -> cls instVarNames asArray.
 		'class_instance_variables' -> cls class instVarNames asArray.
 		'class_variables' -> cls classVarNames asArray.
-		'comment' -> comment }).
+		'comment' -> (self commentOf: cls) }).
 	^ self ok: (self m: {
 		'class' -> cls name.
 		'kind' -> (self kindOf: cls).

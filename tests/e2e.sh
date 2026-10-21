@@ -120,6 +120,10 @@ $S eval - <<< "Evl addInstVarNamed: 'b'. Evl compile: 'two ^ 2' classified: 'x'.
 out=$($S changes list); check "eval-made method change recorded" '[.result.changes[]|select(.origin=="eval" and .selector=="two")]|length' 1
 out=$($S save --package Demo --dir src); check "save includes eval-made changes" '.result.files|map(select(.file|endswith("Evl.class.st")))|length' 1
 grep -q "two \[" src/Demo/Evl.class.st && grep -q "'b'" src/Demo/Evl.class.st && { pass=$((pass+1)); echo "ok   - tonel has eval-made method and ivar, normalised"; } || { fail=$((fail+1)); echo "FAIL - eval-made changes not in tonel"; cat src/Demo/Evl.class.st; }
+# a class comment changed by eval replaces the comment block of the existing file (quotes escaped)
+$S eval "Evl comment: 'Commented by eval, with \"quotes\".'" >/dev/null
+out=$($S save --package Demo --dir src); check "save includes eval-made class comment" '.result.files|map(select(.file|endswith("Evl.class.st")))|length' 1
+[ "$(sed -n 2p src/Demo/Evl.class.st)" = 'Commented by eval, with ""quotes"".' ] && { pass=$((pass+1)); echo "ok   - tonel has the eval-made class comment, quotes escaped"; } || { fail=$((fail+1)); echo "FAIL - eval-made class comment not in tonel"; head -4 src/Demo/Evl.class.st; }
 out=$($S eval '3 zork' --no-source); check "eval --no-source drops the statement" '.error.top.statement' null
 out=$($S method remove Cart total); check "method remove error names --force" '.error.message|contains("--force")'
 

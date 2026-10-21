@@ -142,14 +142,27 @@ fn var_list(label: &str, items: &[String]) -> String {
     format!("\t#{} : [\n{}\n\t],\n", label, body)
 }
 
+/// Tonel comment block of a class (a double quote is written as two); empty for an empty comment.
+fn comment_block(comment: &str) -> String {
+    let text = norm(comment);
+    if text.is_empty() { return String::new(); }
+    format!("\"\n{}\n\"\n", text.replace('"', "\"\""))
+}
+
+/// The comment a leading comment block holds, as the image would have it (quotes unescaped, normalised).
+/// Empty when the text has no comment block.
+fn comment_of_block(block: &str) -> String {
+    let t = block.trim();
+    if t.len() < 2 || !t.starts_with('"') || !t.ends_with('"') { return String::new(); }
+    norm(&t[1..t.len() - 1].replace("\"\"", "\"")).trim().to_string()
+}
+
 fn render_class(c: &Value, symbol_style: bool, package: &str) -> String {
     let name = c["class_name"].as_str().unwrap_or("");
     let is_a_trait = c["class_kind"].as_str() == Some("trait");
     let mut s = String::new();
     if let Some(comment) = c["comment"].as_str() {
-        if !comment.is_empty() {
-            s.push_str(&format!("\"\n{}\n\"\n", norm(comment).replace('"', "\"\"")));
-        }
+        s.push_str(&comment_block(comment));
     }
     if is_a_trait {
         s.push_str("Trait {\n");
@@ -189,16 +202,39 @@ fn listed(block: &str, key: &str) -> Vec<String> {
     }
 }
 
+/// Byte offset just after the leading comment block of a Tonel class file (0 when there is none).
+/// Inside the comment a double quote is written as two, so the block ends at the first lone quote.
+fn comment_end(text: &str) -> usize {
+    let body = text.trim_start();
+    if !body.starts_with('"') { return 0; }
+    let bytes = body.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if bytes.get(i + 1) == Some(&b'"') {
+                i += 2;
+                continue;
+            }
+            return text.len() - body.len() + i + 1;
+        }
+        i += 1;
+    }
+    0
+}
+
 /// The `Class {` / `Trait {` definition block of a Tonel file: (start, end) byte offsets.
 fn definition_span(text: &str) -> Option<(usize, usize)> {
-    let start = ["Class {", "Trait {"].iter().filter_map(|m| text.find(m)).min()?;
+    let from = comment_end(text);
+    let start = from + ["Class {", "Trait {"].iter().filter_map(|m| text[from..].find(m)).min()?;
     let end = start + text[start..].find("\n}")? + 2;
     Some((start, end))
 }
 
 /// If the image's class has other instance/class variables than the file, re-render the variable lists of
 /// the definition block and keep every other entry (name, superclass, traits, classTraits, category, package)
-/// as it is in the file; otherwise answer None.
+/// as it is in the file. A changed class comment replaces the leading comment block (added when the file has
+/// none, removed when the image's comment is empty). Nothing changed: None. An image that sends no comment
+/// (older images, unreadable comment) leaves the file's comment alone.
 fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &str) -> Option<String> {
     let (start, end) = definition_span(text)?;
     let block = &text[start..end];
@@ -207,8 +243,15 @@ fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &s
         ("classVars", str_list(c, "class_variables")),
         ("classInstVars", str_list(c, "class_instance_variables")),
     ];
-    if wanted.iter().all(|(k, v)| &listed(block, k) == v) {
+    let vars_changed = wanted.iter().any(|(k, v)| &listed(block, k) != v);
+    let prefix = &text[..start];
+    let comment_changed = c["comment"].as_str().map_or(false, |image| norm(image).trim() != comment_of_block(prefix));
+    if !vars_changed && !comment_changed {
         return None;
+    }
+    let new_prefix = if comment_changed { comment_block(c["comment"].as_str().unwrap_or("")) } else { prefix.to_string() };
+    if !vars_changed {
+        return Some(format!("{}{}{}", new_prefix, block, &text[end..]));
     }
     // entries: `#key : value` possibly spanning several lines (arrays)
     let mut entries: Vec<(String, String)> = Vec::new();
@@ -242,7 +285,7 @@ fn patch_class_definition(text: &str, c: &Value, symbol_style: bool, package: &s
         out.push(if symbol_style { format!("\t#category : {}", sym(package, true)) } else { format!("\t#package : '{}'", package) });
     }
     let rendered = format!("{}\n{}\n}}", opener, out.join(",\n"));
-    Some(format!("{}{}{}", &text[..start], rendered, &text[end..]))
+    Some(format!("{}{}{}", new_prefix, rendered, &text[end..]))
 }
 
 #[derive(Default)]
@@ -553,6 +596,46 @@ mod tests {
         let t = json!({"class_name": "TFoo", "instance_variables": ["tv", "tw"], "class_variables": [], "class_instance_variables": []});
         let out = patch_class_definition(TRAIT_FILE, &t, false, "Pkg").unwrap();
         assert!(out.starts_with("Trait {\n\t#name : 'TFoo',\n\t#instVars : [\n\t\t'tv',\n\t\t'tw'\n\t],\n\t#package : 'Pkg'\n}\n"), "{}", out);
+    }
+
+    #[test]
+    fn class_comment_changes_replace_the_leading_comment_block() {
+        let file = "\"\nOld comment.\n\"\nClass {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#instVars : [\n\t\t'a'\n\t],\n\t#package : 'Pkg'\n}\n\n{ #category : 'x' }\nBar >> one [\n\t^ 1\n]\n";
+        let with_comment = |comment: Value| {
+            let mut c = json!({"class_name": "Bar", "instance_variables": ["a"], "class_variables": [], "class_instance_variables": []});
+            c["comment"] = comment;
+            c
+        };
+        // (a) a changed comment replaces only the comment block
+        let out = patch_class_definition(file, &with_comment(json!("New comment.")), false, "Pkg").unwrap();
+        assert_eq!(out, file.replacen("Old comment.", "New comment.", 1));
+        // the same comment (line endings do not matter) changes nothing
+        assert!(patch_class_definition(file, &with_comment(json!("Old comment.\r\n")), false, "Pkg").is_none());
+        // a change that sends no comment leaves the file's comment alone
+        assert!(patch_class_definition(file, &with_comment(Value::Null), false, "Pkg").is_none());
+        // (d) an empty image comment removes the comment block
+        let out = patch_class_definition(file, &with_comment(json!("")), false, "Pkg").unwrap();
+        assert_eq!(out, file.replacen("\"\nOld comment.\n\"\n", "", 1));
+        // (b) a file without a comment gets one
+        let bare = file.replacen("\"\nOld comment.\n\"\n", "", 1);
+        let out = patch_class_definition(&bare, &with_comment(json!("A comment.")), false, "Pkg").unwrap();
+        assert_eq!(out, format!("\"\nA comment.\n\"\n{}", bare));
+        // (c) a double quote is written as two and reads back as the same comment
+        let quoted = patch_class_definition(file, &with_comment(json!("Say \"hi\".")), false, "Pkg").unwrap();
+        assert!(quoted.starts_with("\"\nSay \"\"hi\"\".\n\"\nClass {"), "{}", quoted);
+        assert!(patch_class_definition(&quoted, &with_comment(json!("Say \"hi\".")), false, "Pkg").is_none());
+    }
+
+    #[test]
+    fn saving_a_changed_class_comment_patches_the_existing_file() {
+        let dir = tmp("class-comment");
+        fs::write(dir.join("Pkg/Bar.class.st"), "\"\nOld.\n\"\nClass {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#instVars : [\n\t\t'a'\n\t],\n\t#package : 'Pkg'\n}\n").unwrap();
+        let changes = vec![json!({"index": 1, "kind": "class-create", "class_name": "Bar", "class_kind": "class", "package": "Pkg", "class_package": "Pkg", "superclass": "Object", "instance_variables": ["a"], "class_variables": [], "class_instance_variables": [], "comment": "New \"text\"."})];
+        let p = plan(&changes, "Pkg", &dir, false).unwrap();
+        assert_eq!(p.marked, vec![1]);
+        let text = fs::read_to_string(dir.join("Pkg/Bar.class.st")).unwrap();
+        assert_eq!(text, "\"\nNew \"\"text\"\".\n\"\nClass {\n\t#name : 'Bar',\n\t#superclass : 'Object',\n\t#instVars : [\n\t\t'a'\n\t],\n\t#package : 'Pkg'\n}\n");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
