@@ -169,7 +169,7 @@ The delivered image contains your application but no stlive classes and no evalu
 **Works and is tested** (203 headless + 19 GUI end-to-end checks, 150 SUnit tests of the server and 36 Rust unit tests, Pharo 13; macOS arm64 and Linux x86-64 – the 0.8.0 headless checks ran on Linux, the GUI checks were last run on macOS for 0.7.0): the whole debug loop, tests (inherited, parametrized and skipped tests, hundreds of red tests), Tonel write-back including traits, eval-made change recording, baseline re-loading, attach to a running image, GUI mode with Spec2/Morphic, screenshots and button presses, a headless image that survives unhandled errors in forked processes.
 
 **Open / not yet verified:**
-- Windows and Linux are written for but never run (the Windows code compiles for the Windows target; CI only builds, it does not run the end-to-end tests).
+- Windows: verified on Windows 11 by the Orbit project (Pharo 13, VM 10.3.9): `init`, `start`, `load`, `eval` and the tests. **Not verified on Windows:** GUI mode (`start --gui`) and the `ui` commands (`ui windows|screenshot|press`, `eval/compile --ui`), `open-ui`, and the end-to-end suite (CI only builds). Linux is written for and was run for the 0.8.0 headless checks, but is less exercised.
 - Pharo 14 (needed for Spec-Gtk) is not part of this version; the differences live on the `pharo-14` branch.
 - Bloc/Toplo: the UI-process mechanism is the same, but `ui windows`/`ui press` currently understand Morphic-based windows only.
 - No single-stepping (step into/over), no capture of direct stdout/stderr writes, no authentication (loopback only) and no Unix-domain-socket transport.
@@ -188,9 +188,9 @@ Short version: this is a CLI because a shell is the one integration point every 
 
 ## Limitations
 
-- GUI mode is verified with Spec2/Morphic on macOS (Pharo 13). Windows support is written (separate `platform.rs`, builds for the Windows target) but has not been run on Windows.
+- GUI mode is verified with Spec2/Morphic on macOS (Pharo 13). On Windows it has not been run.
 
-- Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is not supported.
+- Only Pharo 13 is tested. macOS arm64 is the development platform; Linux should work but is less exercised. Windows is verified on Windows 11 by the Orbit project: `init`, `start`, `load`, `eval` and tests (since 0.8.1); GUI mode and the `ui` commands are not verified there.
 - Direct writes to the VM's stdout/stderr are not captured (Transcript is).
 - An image saved by stlive 0.7.x or older can contain a running acceptor process that makes it hang at the next start (seen on macOS). Delete that instance's image; `start` rebuilds it from the template. Images saved by 0.8.0 do not have this problem.
 - A method compiled from inside `eval` (`Foo compile: '…'`) keeps the line endings typed in the expression (LF) in the live image; `method compile` and Tonel loads use CR. The files are LF either way.

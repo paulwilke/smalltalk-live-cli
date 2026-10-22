@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 – Windows fixes from the first Windows run
+First successful runs of `init`, `start`, `load` and `test run` on Windows 11 (Pharo 13, VM 10.3.9), done by the Orbit project. Both fixes are Windows-only; Unix behaviour is unchanged.
+- **Fix (Windows): `stlive start` hands the VM plain paths.** `std::fs::canonicalize` answers the extended-length form (`\\?\C:\...`) on Windows, which the Pharo VM does not open ("Image file not found"), so `start` ended with "the image ended before it published its port". `start`, `run` and `init --vm` now use `platform::absolute`, which strips the `\\?\` and `\\?\UNC\` prefixes.
+- **Fix (Windows): the detached image no longer inherits stlive's own stdio handles.** A child created with redirected stdio inherited stlive's stdin/stdout/stderr when they were pipes, so a script reading the answer of `stlive start` through a pipe hung until the image ended. The standard handles are now made non-inheritable before the spawn.
+- README: the Windows caveat now says what was verified (Windows 11 by the Orbit project: `init`, `start`, `load`, `eval`, tests) and what was not: GUI mode, the `ui` commands and `open-ui`, and the end-to-end suite on Windows.
+
 ## 0.8.0 – feedback from the Orbit rebuild
 **Fresh runs and test sets**
 - **`stlive test run` takes several targets and glob patterns**: `stlive test run 'Orbit-*-Tests' Other-Tests 'Foo>>testBar'` runs them as one run (each test once); `*`/`?` match packages and test class names; no match → `no_tests_matched`. The result lists `targets` and `expanded`.
